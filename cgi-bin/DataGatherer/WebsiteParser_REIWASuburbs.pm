@@ -61,9 +61,12 @@ sub parseREIWASuburbLetters
    my $htmlSyntaxTree = shift;
    my $url = shift;
    my $instanceID = shift;
+   my $transactionNo = shift;
+   my $threadID = shift;
+   my $parentLabel = shift;
    my $printLogger = $documentReader->getGlobalParameter('printLogger');
    
-   $printLogger->print("parseSuburbLetters()\n");
+   $printLogger->print("parseSuburbLetters($parentLabel))\n");
    if ($htmlSyntaxTree->containsTextPattern("Suburb Profile"))
    {  
               
@@ -71,7 +74,7 @@ sub parseREIWASuburbLetters
       if ($htmlSyntaxTree->setSearchStartConstraintByText("for a suburb."))
       {
          if ($htmlSyntaxTree->setSearchEndConstraintByText("SHOW ALL"))
-              {                                         
+         {                                         
             # get all anchors in the search constraints               
             if ($anchorsListRef = $htmlSyntaxTree->getAnchors())
             {                    
@@ -123,9 +126,12 @@ sub parseREIWASuburbNames
    my $htmlSyntaxTree = shift;
    my $url = shift;
    my $instanceID = shift;
+   my $transactionNo = shift;
+   my $threadID = shift;
+   my $parentLabel = shift;
    my $printLogger = $documentReader->getGlobalParameter('printLogger');
    
-   $printLogger->print("parseSuburbNames()\n");
+   $printLogger->print("parseSuburbNames(($parentLabel))\n");
    if ($htmlSyntaxTree->containsTextPattern("Suburb Profile"))
    {        
       # parse the main suburb anchors of this page
@@ -247,7 +253,10 @@ sub parseREIWASuburbProfilePage
    my $htmlSyntaxTree = shift;
    my $url = shift;
    my $instanceID = shift;
-
+   my $transactionNo = shift;
+   my $threadID = shift;
+   my $parentLabel = shift;
+   
    my $sqlClient = $documentReader->getSQLClient();
    my $tablesRef = $documentReader->getTableObjects();
    
@@ -259,7 +268,7 @@ sub parseREIWASuburbProfilePage
    my $printLogger = $documentReader->getGlobalParameter('printLogger');
 
    
-   $printLogger->print("parseSuburbProfilePage()\n");
+   $printLogger->print("parseSuburbProfilePage($parentLabel)\n");
    # --- now extract the suburb information for this page ---
    if ($htmlSyntaxTree->containsTextPattern("Suburb Profile"))
    {
@@ -332,11 +341,15 @@ sub parseREIWASuburbsHomePage
    my $htmlSyntaxTree = shift;
    my $url = shift;         
    my $instanceID = shift;
+   my $transactionNo = shift;
+   my $threadID = shift;
+   my $parentLabel = shift;
+   
    my @anchors;
    my $printLogger = $documentReader->getGlobalParameter('printLogger');
    
    # --- now extract the property information for this page ---
-   $printLogger->print("inParseHomePage:\n");
+   $printLogger->print("inParseHomePage($parentLabel):\n");
    if ($htmlSyntaxTree->containsTextPattern("Real Estate Institute of Western Australia"))
    {                                     
       $anchor = $htmlSyntaxTree->getNextAnchorContainingPattern("suburb profiles");
@@ -357,7 +370,8 @@ sub parseREIWASuburbsHomePage
    # return a list with just the anchor in it
    if ($anchor)
    {
-      return ($anchor);
+      $httpTransaction = HTTPTransaction::new($anchor, $url, $parentLabel.".suburbs");  
+      return ($httpTransaction);
    }
    else
    {

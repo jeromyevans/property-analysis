@@ -19,6 +19,10 @@
 #  6 Oct 2004 - changed post parameters to list of hashes instead of hash to allow multiple parameters
 #   with the same name
 #  7 Oct 2004 - changed constructor to accept either an HTML form or a simple URL
+#  30 Oct 2004 - added a label to each transaction used to identify it (for recovery/logging purposes)
+#              - allowed referer to be a string URL OR a reference to a HTTP Transaction.  The purpose of the latter option
+#    allows the method and content to be retain, useful for recovery.
+
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -43,7 +47,8 @@ use DebugTools;
 #
 # Parameters:
 #  htmlForm
-#  string referer URL
+#  string referer URL  or reference to referer HTTPTransaction 
+#  string label - used to mark recovery point.  Any useful name
 
 # Constraints:
 #  nil
@@ -54,16 +59,25 @@ use DebugTools;
 # Returns:
 #  HTTPTransaction object
 #    
-sub new ($ $)
+sub new ($ $ $)
 {
    my $htmlFormOrGetURL = shift;
    my $referer = shift;
+   my $label = shift;   
+   my $optionalPOSTContent = shift;
    my $escapedParameters = undef;                        
   
    if (ref($htmlFormOrGetURL))
    { 
       $htmlForm = $htmlFormOrGetURL;
-      $url = new URI::URL($htmlForm->getAction(), $referer)->abs()->as_string();      
+      if (!ref($referer))
+      {
+         $url = new URI::URL($htmlForm->getAction(), $referer)->abs()->as_string();
+      }
+      else
+      {
+         $url = new URI::URL($htmlForm->getAction(), $referer->getURL())->abs()->as_string();
+      }
       
       $method = $htmlForm->getMethod();
       $escapedParameters = $htmlForm->getEscapedParameters();
@@ -90,7 +104,14 @@ sub new ($ $)
    else
    {
       # this is a URL for a simple GET transaction
-      $url = new URI::URL($htmlFormOrGetURL, $referer)->abs()->as_string();      
+      if (!ref($referer))
+      {
+         $url = new URI::URL($htmlFormOrGetURL, $referer)->abs()->as_string();
+      }
+      else
+      {
+         $url = new URI::URL($htmlForm->getAction(), $referer->getURL())->abs()->as_string();
+      }
       $method = 'GET';
    }
    
@@ -99,7 +120,8 @@ sub new ($ $)
       url => $url,
       method => $method,      
       escapedParameters => $escapedParameters,
-      referer => $referer            
+      referer => $referer, 
+      label => $label
    };    
    bless $httpTransaction;     
    
@@ -273,7 +295,8 @@ sub setEscapedParameters
    my $this = shift;
    my $escapedParameters = shift;
     
-   $this->{'escapedParameters'} = $escapedParameters;                
+   $this->{'escapedParameters'} = $escapedParameters;
+   $this->{'method'} = 'POST';                
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -356,5 +379,27 @@ sub printTransaction
 }
 
 # -------------------------------------------------------------------------------------------------
+
+# -------------------------------------------------------------------------------------------------
+# getLabel
+#
+# Purpose:
+#  get's the label associated with the transaction
+#
+# Parameters:
+#  nil
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   string url
+#
+sub getLabel
+{
+   my $this = shift;
+    
+   return $this->{'label'};                
+}
 
 

@@ -22,10 +22,27 @@
 #   to leverage off common code instead of duplicating it
 #                    - improved parameter parsing to support generic functions.  Generic configuration file for parameters, checking
 #   and reporting of mandatory paramneters.
+#  29 October 2004 - added support for DomainRegionsn table - needed to parse domain website
 # 
+#  Domain.State.Region.Suburb
+#   continue should be from that point, not from the URL
+#
+#  NEED TO GET HTTPCLIENT TO ACCEPT AN HTTPTRANSACTION SO ALL INFORMATION ABOUT THE REFERER IS RETAINED
+#    need to record method,url and content when updating the referer stack
+#  INTENT IS TO BE ABLE TO GET BACK TO EXACTLY WHERE IT WAS FROM THE HOME PAGE
+#   it needs a stack of URL's, but only one through each level of processing.
+#    eg. home page, then state url, then region url, then suburb url, then house url
+# Can then recovery from the home page to the last position immediately....
+   #  the referer has this info.
+   #
+#  RUN PARSERS IN A SEPARATE PROCESS 
+#  USE DATABASE TO SPECIFY PARSERS AND RECOVERY POINTS
+#
+#   CONTINUE SESSION DOESN'T WORK IN THE DOMAIN CONTEXT - it starts where it last was without checking the region, etc properly
+#    need it to read the region and suburb every time to keep track of where it is.
+#    I NEED TO THINK ABOUT THE BEST WAY TO HANDLE THIS???
+#
 #   NEED TO PREVENT DOMAIN FROM PROCESSING THE SAME SUBURB MULTIPLE TIMES!
-#   NEED TO DO RETRY ON 500 HTTP ERROR
-#   NEED TO ADD SUPPORT FOR SUBURB PROFILES
 #   NEED TO GET AGENT NAME
 #   NEED TO FIND WAY FOR PARSERS TO BE SPECIFIED THROUGH THE CONFIG FILE (low priority)
 # To do:
@@ -54,7 +71,8 @@ use WebsiteParser_REIWASales;
 use WebsiteParser_DomainSales;
 use WebsiteParser_REIWARentals;
 use WebsiteParser_REIWASuburbs;
-  
+use DomainRegions;
+
 # -------------------------------------------------------------------------------------------------    
 my %parameters = undef;
 
@@ -77,7 +95,7 @@ if (($parseSuccess) && (!($parameters{'command'} =~ /maintenance/i)))
    }            
    
    # initialise the objects for communicating with database tables
-   ($sqlClient, $advertisedSaleProfiles, $advertisedRentalProfiles, $propertyTypes, $suburbProfiles) = initialiseTableObjects();
+   ($sqlClient, $advertisedSaleProfiles, $advertisedRentalProfiles, $propertyTypes, $suburbProfiles, $domainRegions) = initialiseTableObjects();
  
    # enable logging to disk by the SQL client
    $sqlClient->enableLogging($parameters{'instanceID'});
@@ -88,6 +106,7 @@ if (($parseSuccess) && (!($parameters{'command'} =~ /maintenance/i)))
    $myTableObjects{'advertisedRentalProfiles'} = $advertisedRentalProfiles;
    $myTableObjects{'propertyTypes'} = $propertyTypes;
    $myTableObjects{'suburbProfiles'} = $suburbProfiles;
+   $myTableObjects{'domainRegions'} = $domainRegions;
    
    # parsed into the parser functions
    $parameters{'printLogger'} = $printLogger;
@@ -231,8 +250,9 @@ sub initialiseTableObjects
    my $advertisedSaleProfiles = AdvertisedSaleProfiles::new($sqlClient);
    my $propertyTypes = PropertyTypes::new($sqlClient);
    my $suburbProfiles = SuburbProfiles::new($sqlClient);
+   my $domainRegions = DomainRegions::new($sqlClient);
 
-   return ($sqlClient, $advertisedSaleProfiles, $advertisedRentalProfiles, $propertyTypes, $suburbProfiles);
+   return ($sqlClient, $advertisedSaleProfiles, $advertisedRentalProfiles, $propertyTypes, $suburbProfiles, $domainRegions);
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -705,7 +725,7 @@ sub parseParameters
    if ($parameters{'command'})
    {
       # if a command has been specified, parse the parameters
-      if (defined $mandatoryParameters{$parameters{'command'}})
+      if (exists $mandatoryParameters{$parameters{'command'}})
       {
          $success = parseMandatoryParameters(\%parameters, $mandatoryParameters{$parameters{'command'}});
             

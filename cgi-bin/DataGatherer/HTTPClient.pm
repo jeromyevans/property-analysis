@@ -24,7 +24,8 @@
 #  7 Oct 2004 - changed post to accept an encoded content string instead of a hash for the content
 #  17 Oct 2004 - added retransmissions for 500 response code (internal server error)
 #  26 Oct 2004 - added clearCookies function
-
+#  31 Oct 20004 - added fetchDocument as a means to use a httpTransaction to get a document.  Previously it was upto the module
+#    using this to determine which method to use
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -74,6 +75,8 @@ sub new ($)
       responseStackRef => \@responseStack,
       cookieJarRef => undef,
       absoluteURL => undef,
+      method => undef,
+      httpTransaction => undef
    };  
    bless $httpClient;    # make it an object of this class      
    
@@ -94,7 +97,7 @@ sub new ($)
    $cookieJar = HTTP::Cookies->new( file => "logs/".$sessionName.".cookies", 
                                     autosave => 0,
                                     ignore_discard => 1);
-   print "   loading cookies logs/".$sessionName.".cookies...\n";
+#   print "   loading cookies logs/".$sessionName.".cookies...\n";
    $cookieJar->load();
    #print $cookieJar->as_string();
    # set the cookie jar handler
@@ -357,7 +360,8 @@ sub get()
    #print "---\n";
    $this->{'requestRef'} = $request;      # update instance variable   
    $this->{'absoluteURL'} = $absoluteURL;  
-   
+   $this->{'method'} = 'GET';  
+
    # prepare to run in a loop if request fails with certain error types
    $requestAttempts = 0;
    $retryRequest = 1;
@@ -485,6 +489,7 @@ sub post()
      
    $this->{'absoluteURL'} = $absoluteURL;              
    $this->{'requestRef'} = $request;      # update instance variable      
+   $this->{'method'} = 'POST';  
    
  
    # prepare to run in a loop if request fails with certain error types
@@ -610,8 +615,33 @@ sub getURL()
    my $this = shift;
 
    return $this->{'absoluteURL'};  
+}
+
+# -------------------------------------------------------------------------------------------------
+# returns as a STRING the METHOD last used by this client
+# 
+# Purpose:
+#  Retreiving a document via HTTP
+#
+# Parameters:
+#  nil
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   STRING containing url, or undef
+#
+sub getMethod()
+
+{
+   my $this = shift;
+
+   return $this->{'method'};  
    
-   return $content;   
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -749,4 +779,134 @@ sub clearCookies()
       $cookieJar->clear();
    }
 }
+
+
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+
+# fetchDocument
+# loads a document in accordance with the specified HTTPTransaction
+
+# Purpose:
+#  loading a document via HTTP
+#
+# Parameters:
+#  htmlTransaction to use
+#  string base URL
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  nil
+#
+# Returns:
+#  TRUE if the document should be parsed
+#  
+sub fetchDocument
+
+{
+   my $this = shift;
+   my $nextTransaction = shift;
+   my $startURL = shift;
+   
+   my $url;
+   my $postParameters;
+   my $processResponse = 0;
+                        
+   if ($nextTransaction->methodIsGet())
+   {      
+      $url = new URI::URL($nextTransaction->getURL(), $startURL)->abs()->as_string();
+      
+#      ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
+#      $year += 1900;
+#      $mon++;      
+      
+#      $displayStr = sprintf("%02d:%02d:%02d  GET: %s\n", $hour, $min, $sec, $url);     
+#      $printLogger->print($displayStr);     
+      
+      $this->setReferer($nextTransaction->getReferer());
+      
+      if ($this->get($url, $this->{'transactionNo'}))
+      {
+         $processResponse = 1;
+      }
+#      else
+#      {
+#         $printLogger->print("failed ", $httpClient->responseCode(), "\n");
+#      }
+
+      # count the number of transactions performed this instance (this is used in the HTTP log)
+      $this->{'transactionNo'}++;
+      $this->{'httpTransaction'} = $nextTransaction;
+      
+#      $printLogger->print("HTTP (GET) Response Code: ", $httpClient->responseCode(), "\n");
+   }
+   else
+   {
+      if ($nextTransaction->methodIsPost())
+      {                                  
+         $url = new URI::URL($nextTransaction->getURL(), $startURL)->abs()->as_string();    
+         
+#         ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
+#         $year += 1900;
+#         $mon++;      
+         
+#         $displayStr = sprintf("%02d:%02d:%02d POST: %s\n", $hour, $min, $sec, $url);   
+#         $printLogger->print($displayStr);     
+                           
+         $escapedParameters = $nextTransaction->getEscapedParameters();
+         
+         $this->setReferer($nextTransaction->getReferer());                 
+               
+         if ($this->post($url, $escapedParameters, $this->{'transactionNo'}))
+         {
+            $processResponse = 1;
+         }
+#         else
+#         {
+#            $printLogger->print("failed ", $httpClient->responseCode(), "\n");
+#         }   
+      
+         # count the number of transactions performed this instance (this is used in the HTTP log)
+         $this->{'transactionNo'}++;
+         $this->{'httpTransaction'} = $nextTransaction;
+         
+#         $printLogger->print("HTTP (POST) Response Code: ", $httpClient->responseCode(), "\n");
+      }
+   }
+   
+   return $processResponse;
+}
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+
+# -------------------------------------------------------------------------------------------------
+# returns the httpTransaction last used
+# 
+# Purpose:
+#  Retreiving a document via HTTP
+#
+# Parameters:
+#  nil
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   REFERENCE to a HTTPTransaction
+#
+sub getHTTPTransaction()
+
+{
+   my $this = shift;
+
+   return $this->{'httpTransaction'};  
+   
+}
+
+# -------------------------------------------------------------------------------------------------
 

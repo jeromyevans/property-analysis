@@ -222,6 +222,9 @@ sub parseREIWARentalsSearchDetails
    my $url = shift;
    my $instanceID = shift;
    my $transactionNo = shift;
+   my $threadID = shift;
+   my $parentLabel = shift;
+
    
    my $sqlClient = $documentReader->getSQLClient();
    my $tablesRef = $documentReader->getTableObjects();
@@ -233,7 +236,7 @@ sub parseREIWARentalsSearchDetails
    my $sourceName = $documentReader->getGlobalParameter('source');
    my $printLogger = $documentReader->getGlobalParameter('printLogger');
    
-   $printLogger->print("in parseSearchDetails\n");
+   $printLogger->print("in parseSearchDetails ($parentLabel)\n");
    
    # --- now extract the property information for this page ---
                                        
@@ -307,6 +310,8 @@ sub parseREIWARentalsSearchForm
    my $url = shift;
    my $instanceID = shift;
    my $transactionNo = shift;
+   my $threadID = shift;
+   my $parentLabel = shift;
    
    my $htmlForm;
    my $actionURL;
@@ -320,7 +325,7 @@ sub parseREIWARentalsSearchForm
    my @metropolitanAreas = ('Armadale', 'Bassendean', 'Bayswater', 'Belmont', 'Cambridge', 'Canning', 'Chittering', 'Claremont', 'Cockburn', 'Cottesloe', 'East Fremantle', 'Fremantle', 'Gosnells', 'Joondalup', 'Kalamunda', 'Kwinana', 'Melville', 'Mosman Park', 'Mundaring', 'Nedlands', 'Peppermint Grove', 'Perth', 'Rockingham', 'Serpentine-Jarrahdale', 'South Perth', 'Stirling', 'Subiaco', 'Swan', 'Toodyah', 'Victoria Park', 'Vincent', 'Wanneroo');  
    my %subAreaHash;
    
-   $printLogger->print("in parseSearchForm\n");
+   $printLogger->print("in parseSearchForm ($parentLabel)\n");
       
    # get the HTML Form instance
    $htmlForm = $htmlSyntaxTree->getHTMLForm("search");
@@ -375,8 +380,8 @@ sub parseREIWARentalsSearchForm
             if ($acceptSuburb)
             {         
                #print "accepted\n";               
-               my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url);
-            
+               my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url, $parentLabel.".".$_->{'text'});
+
                # add this new transaction to the list to return for processing
                $transactionList[$noOfTransactions] = $newHTTPTransaction;
                $noOfTransactions++;
@@ -447,7 +452,7 @@ sub parseREIWARentalsSearchForm
          $htmlForm->clearInputValue('subdivision');              # don't set subdivision                  
          $htmlForm->setInputValue('MainArea', 0);                # MainArea is [all] 
          $htmlForm->setInputValue('SubArea', $subAreaHash{$_});
-         my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url);
+         my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url, $parentLabel.".".$subAreaHash{$_});
          
          # add this new transaction to the list to return for processing
          $transactionList[$noOfTransactions] = $newHTTPTransaction;
@@ -502,13 +507,15 @@ sub parseREIWARentalsSearchQuery
    my $url = shift;
    my $instanceID = shift;
    my $transactionNo = shift;
+   my $threadID = shift;
+   my $parentLabel = shift;
    
    my $htmlForm;
    my $actionURL;
    my $httpTransaction;
    my $printLogger = $documentReader->getGlobalParameter('printLogger');   
    
-   $printLogger->print("in parseSearchQuery\n");
+   $printLogger->print("in parseSearchQuery ($parentLabel)\n");
        
    # if this page contains a form to select whether to proceed or not...
    $htmlForm = $htmlSyntaxTree->getHTMLForm();
@@ -520,7 +527,9 @@ sub parseREIWARentalsSearchQuery
       #%postParameters = $htmlForm->getPostParameters();
       $printLogger->print("   parseSearchQueury: returning POST transaction for continue form.\n");
       #$httpTransaction = HTTPTransaction::new($actionURL, 'POST', \%postParameters, $url);
-      $httpTransaction = HTTPTransaction::new($htmlForm, $url);            
+      $httpTransaction = HTTPTransaction::new($htmlForm, $url, "TBD");           
+      my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url, $parentLabel.".continue");
+
    }	  
    else 
    {
@@ -567,12 +576,14 @@ sub parseREIWARentalsHomePage
    my $url = shift;
    my $instanceID = shift;
    my $transactionNo = shift;   
+   my $threadID = shift;
+   my $parentLabel = shift;
 
    my $printLogger = $documentReader->getGlobalParameter('printLogger');      
    my @anchors;
    
    # --- now extract the property information for this page ---
-   $printLogger->print("inParseHomePage:\n");
+   $printLogger->print("inParseHomePage ($parentLabel):\n");
    if ($htmlSyntaxTree->containsTextPattern("Real Estate Institute of Western Australia"))
    {                                     
       $anchor = $htmlSyntaxTree->getNextAnchorContainingPattern("Homes for Rent");
@@ -593,7 +604,9 @@ sub parseREIWARentalsHomePage
    # return a list with just the anchor in it
    if ($anchor)
    {
-      return ($anchor);
+      $httpTransaction = HTTPTransaction::new($anchor, $url, $parentLabel.".rentals");   # use the state in the label
+
+      return ($httpTransaction);
    }
    else
    {
@@ -631,6 +644,9 @@ sub parseREIWARentalsSearchList
    my $url = shift;    
    my $instanceID = shift;
    my $transactionNo = shift;
+   my $threadID = shift;
+   my $parentLabel = shift;
+   
    my $printLogger = $documentReader->getGlobalParameter('printLogger');
    my $sourceName =  $documentReader->getGlobalParameter('source');
    
@@ -638,7 +654,7 @@ sub parseREIWARentalsSearchList
    my $firstRun = 1;        
    
    # --- now extract the property information for this page ---
-   $printLogger->print("inParseSearchList:\n");
+   $printLogger->print("inParseSearchList ($parentLabel):\n");
    #$htmlSyntaxTree->printText();
    if ($htmlSyntaxTree->containsTextPattern("matching listings"))
    {         
@@ -673,8 +689,10 @@ sub parseREIWARentalsSearchList
                if (!$advertisedRentalProfiles->checkIfTupleExists($sourceName, $sourceID, undef, $price))
                {   
                   $printLogger->print("   parseSearchList: adding anchor id ", $sourceID, "...\n");
-                  #$printLogger->print("   parseSearchList: url=", $sourceURL, "\n");                  
-                  push @urlList, $sourceURL;
+                  #$printLogger->print("   parseSearchList: url=", $sourceURL, "\n");           
+                  my $httpTransaction = HTTPTransaction::new($sourceURL, $url, $parentLabel.".".$sourceID);                  
+             
+                  push @urlList, $httpTransaction;
                }
                else
                {                 
@@ -695,7 +713,9 @@ sub parseREIWARentalsSearchList
          if ($nextButtonListRef)
          {            
             $printLogger->print("   parseSearchList: list includes a 'next' button anchor...\n");
-            @anchorsList = (@urlList, $$nextButtonListRef[0]);
+            $httpTransaction = HTTPTransaction::new($$nextButtonListRef[0], $url, $parentLabel);                  
+
+            @anchorsList = (@urlList, $httpTransaction);
          }
          else
          {            
@@ -761,7 +781,7 @@ sub parseREIWARentalsDisplayResponse
    my $printLogger = $documentReader->getGlobalParameter('printLogger');
    
    # --- now extract the property information for this page ---
-   $printLogger->print("in ParseDisplayResponse:\n");
+   $printLogger->print("in ParseDisplayResponse ($parentLabel):\n");
    $htmlSyntaxTree->printText();
    
    # return a list with just the anchor in it  

@@ -74,6 +74,8 @@ my $DEFAULT_USER_AGENT ="Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)";
 
 my ($printLogger) = undef;
 
+my @refererStack;
+my $ok = 1;
 # -------------------------------------------------------------------------------------------------
 # new
 # contructor for the document reader
@@ -458,10 +460,10 @@ sub _loadSessionURLStack
          # remove end of line marker from $_
          chomp;
 	      # split on null character
-         ($method, $url, $content) = split /\0/;
+         ($method, $url, $content, $label) = split /\0/;
 	 	 
-         $httpTransaction = HTTPTransaction::new($url, undef);  # NOTE: referer is lost (wasn't saved)
-         
+         $httpTransaction = HTTPTransaction::new($url, undef, $label);  # NOTE: referer is lost (wasn't saved)
+        
          if ($content)
          {
             $httpTransaction->setEscapedParameters($content);
@@ -518,8 +520,16 @@ sub _saveSessionURLStack
    {        
       $url = $_->getURL();
       $method = $_->getMethod();
-      $escapedContent = $_->getEscapedParameters();
-      print SESSION_FILE "$method\0$url\0$escapedContent\n";        
+      if ($method =~ /POST/i)
+      {
+         $escapedContent = $_->getEscapedParameters();
+      }
+      else
+      {
+         $escapedContent = ""; 
+      }
+      $label = $_->getLabel();
+      print SESSION_FILE "$method\0$url\0$escapedContent\0$label\n";        
    }
       
    close(SESSION_FILE);
@@ -596,104 +606,6 @@ sub stringContainsPattern
 
 # -------------------------------------------------------------------------------------------------
 
-# _fetchDocument
-# loads a document in accordance with the specified HTTPTransaction
-
-# Purpose:
-#  loading a document via HTTP
-#
-# Parameters:
-#  htmlTransaction to use
-#  httpclient to use
-#  string base URL
-#
-# Constraints:
-#  nil
-#
-# Updates:
-#  nil
-#
-# Returns:
-#  TRUE if the document should be parsed
-#  
-sub _fetchDocument
-
-{
-   my $this = shift;
-   my $nextTransaction = shift;
-   my $httpClient = shift;
-   my $startURL = shift;
-   
-   my $url;
-   my $postParameters;
-   my $processResponse = 0;
-                        
-   if ($nextTransaction->methodIsGet())
-   {      
-      $url = new URI::URL($nextTransaction->getURL(), $startURL)->abs()->as_string();
-      
-      ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
-      $year += 1900;
-      $mon++;      
-      
-      $displayStr = sprintf("%02d:%02d:%02d  GET: %s\n", $hour, $min, $sec, $url);     
-      $printLogger->print($displayStr);     
-      
-      $httpClient->setReferer($nextTransaction->getReferer());
-
-      
-      if ($httpClient->get($url, $this->{'transactionNo'}))
-      {
-         $processResponse = 1;
-      }
-      else
-      {
-         $printLogger->print("failed ", $httpClient->responseCode(), "\n");
-      }
-
-      # count the number of transactions performed this instance (this is used in the HTTP log)
-      $this->{'transactionNo'}++;
-      
-      $printLogger->print("HTTP (GET) Response Code: ", $httpClient->responseCode(), "\n");
-   }
-   else
-   {
-      if ($nextTransaction->methodIsPost())
-      {                                  
-         $url = new URI::URL($nextTransaction->getURL(), $startURL)->abs()->as_string();    
-         
-         ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
-         $year += 1900;
-         $mon++;      
-         
-         $displayStr = sprintf("%02d:%02d:%02d POST: %s\n", $hour, $min, $sec, $url);   
-         $printLogger->print($displayStr);     
-                           
-         $escapedParameters = $nextTransaction->getEscapedParameters();
-         
-         $httpClient->setReferer($nextTransaction->getReferer());                 
-               
-         if ($httpClient->post($url, $escapedParameters, $this->{'transactionNo'}))
-         {
-            $processResponse = 1;
-         }
-         else
-         {
-            $printLogger->print("failed ", $httpClient->responseCode(), "\n");
-         }   
-      
-         # count the number of transactions performed this instance (this is used in the HTTP log)
-         $this->{'transactionNo'}++;
-      
-         $printLogger->print("HTTP (POST) Response Code: ", $httpClient->responseCode(), "\n");
-      }
-   }
-   
-   return $processResponse;
-}
-
-# -------------------------------------------------------------------------------------------------
-
 # _parseDocument
 # parses a received document, calling local callback's if necessary and
 # returns a new list of transactions to process
@@ -754,7 +666,7 @@ sub _parseDocument
    if ($htmlSyntaxTree->containsFrames())           
    {
          
-      $printLogger->print("  Loading frames...\n"); 
+      #$printLogger->print("  Loading frames...\n"); 
       @frameList = $htmlSyntaxTree->getFrames();   
 
       # for each frame, load it's content but don't parse it yet (store content
@@ -765,13 +677,15 @@ sub _parseDocument
          # create new transaction.  set referer to the base url 
          # 2 Oct 2004 - bugfix to referer
          #$httpTransaction = HTTPTransaction::new($absoluteURL, 'GET', undef, $absoluteURL);
-         $httpTransaction = HTTPTransaction::new($absoluteURL, $url);
+         $httpTransaction = HTTPTransaction::new($absoluteURL, $url, $nextTransaction->getLabel());
+         # 30 Oct 2004 - referer is a transaction - useful for referer stack (for recovery)
+         #$httpTransaction = HTTPTransaction::new($absoluteURL, $nextTransaction, $nextTransaction->getLabel());
          
          $frameHTTPClient = HTTPClient::new($this->{'instanceID'});      
          $frameHTTPClient->setProxy($this->{'proxy'});                  
          $frameHTTPClient->setUserAgent($DEFAULT_USER_AGENT);
 
-         if ($this->_fetchDocument($httpTransaction, $frameHTTPClient, $url))
+         if ($frameHTTPClient->fetchDocument($httpTransaction, $url))
          {
             $frameClientList[$noOfFrames] = $frameHTTPClient;
             $noOfFrames++;
@@ -784,8 +698,8 @@ sub _parseDocument
    foreach (@frameClientList)
    {  
       $url = $_->getURL();
-      #$printLogger->print("parsing document $url\n");
-      
+      $thisTransaction = $_->getHTTPTransaction();
+
       # for the very first element (the top window) don't need to parse
       # the content again - it was done already to determine if there's 
       # any frames
@@ -801,20 +715,68 @@ sub _parseDocument
          $inTopFrame = 0;
       }   
       
+      # determine if there's a parser defined for this url...
       if (($parserIndex = stringContainsPattern($url, \@parserPatternList)) >= 0)
    	{
-	     # print "calling callback #$parserIndex...\n";
+	      # print "calling callback #$parserIndex...\n";
+         # save the current transaction position - for recovery
+         #saveLastTransaction($this->{'threadID'}, $nextTransaction->getLabel());
+
+         # referer stack processing....
+         
+         # update the referer stack before processing...
+         # if this URL isn't already in the stack, push it on the end
+         $index = 0;
+         $found = 0;
+         foreach (@refererStack)
+         {
+            # if this referer is already in the stack, drop back to that level
+            if (($thisTransaction->getURL() eq $_->getURL()) && ($thisTransaction->getMethod() eq $_->getMethod()))
+            {
+               # already in stack - truncate the array at this element
+               #print "   truncate list at element ", $index, "\n";
+               $#refererStack = $index;
+               $found = 1;
+               last;
+            }
+            $index++;
+         }
+         # if the element isn't in the stack, push it onto the list
+         if (!$found)
+         {
+            push @refererStack, $thisTransaction;
+         }
+         
+         # print the referer stack...
+         #$index = 0;
+         #foreach (@refererStack)
+         #{
+         #   print "   $index: ", $_->getMethod(), " ", $_->getURL(), "\n";
+         #   $index++;
+         #}
+         #print "     (", $thisTransaction->getMethod(), " ", $thisTransaction->getURL(), ")\n";
+
+         # save the referer stack to disk
+         $this->saveRefererStack(\@refererStack);
+         
+         ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
+         $year += 1900;
+         $mon++;      
+               
+         $displayStr = sprintf("%02d:%02d:%02d  parsing...\n", $hour, $min, $sec);     
+         $printLogger->print($displayStr);
+         
 	      # 26 September 2004 - measure how long the callback takes to run  
          $startTime = time;
          
 	   	# get the value from the hash with the pattern matching the callback function
 		   # the value in the cash is a code reference (to the callback function)		            
 		   my $callbackFunction = $$parserHashRef{$parserPatternList[$parserIndex]};		  		  
-         my @callbackTransactionStack = &$callbackFunction($this, $htmlSyntaxTree, $url, $this->{'instanceID'}, $this->{'transactionNo'}, $this->{'threadID'});
+         my @callbackTransactionStack = &$callbackFunction($this, $htmlSyntaxTree, $url, $this->{'instanceID'}, $this->{'transactionNo'}, $this->{'threadID'}, $nextTransaction->getLabel());
 		
          $endTime = time;
          $runningTime = $endTime - $startTime;
-         #print "Transaction $transactionNo took $runningTime seconds\n";
+           #print "Transaction $transactionNo took $runningTime seconds\n";
          if ($runningTime > 20)
          {
             $printLogger->print("Getting very slow...low memory....halting this instance (should automatically restart)\n");
@@ -836,7 +798,7 @@ sub _parseDocument
             {
                # this is a URL to GET - create a new transaction (use the base URL as referrer)
                $absoluteURL = new URI::URL($_, $url)->abs()->as_string();		               
-               $httpTransaction = HTTPTransaction::new($absoluteURL, $url);
+               $httpTransaction = HTTPTransaction::new($absoluteURL, $url, $nextTransaction->getLabel()."?");
             }
                      	                                          
 		      push @newTransactionStack, $httpTransaction;                                          
@@ -942,6 +904,7 @@ sub run ( $ )
    {
       if (defined $this->{'threadID'})
       {
+       
          # the threadID has been specified - continue that thread
          # 26 Sept 04 - attempt to load the last session file and last cookie file for this session
          @sessionURLstack = $this->_loadSessionURLStack(1);
@@ -952,6 +915,34 @@ sub run ( $ )
          {
             # there's no session to continue - start a new session
             $startSession = 1;
+         }
+         else
+         {
+            # 31 Oct 04 - the code below will load pages back until the last position - if it is used, 
+            # then the session URL stack shouldn't be loaded.  Intead this would be used and the
+            # parse notified of which point it should continue from
+#            print "loading referer stack...\n";
+            # get back to the last position in the session by following the path in the referer stack
+#            @refererStack = $this->loadRefererStack();
+            
+#            $httpClient = HTTPClient::new($this->{'instanceID'});      
+#            $httpClient->setProxy($this->{'proxy'});
+#            $httpClient->setUserAgent($DEFAULT_USER_AGENT);
+#            $this->{'httpClient'} = $httpClient;      
+            
+            # skip forward through to the recovery point (this allows cookies and session tokens to be generated
+            # from scratch...)
+#            $lastURL = $startURL;
+#            foreach (@refererStack)
+#            {
+#               print "*", $_->getMethod(), " ", $_->getURL(), "\n";
+#               if ($httpClient->fetchDocument($_, $lastURL))
+#               {
+#                  
+#               }
+#               
+#               $lastURL = $_->getURL();
+#            }
          }
       }
    }
@@ -966,9 +957,9 @@ sub run ( $ )
       $httpClient->setProxy($this->{'proxy'});
       $httpClient->setUserAgent($DEFAULT_USER_AGENT);
       $this->{'httpClient'} = $httpClient;      
-      $nextTransaction = HTTPTransaction::new($startURL, undef);  # no referer - this is first request
+      $nextTransaction = HTTPTransaction::new($startURL, undef, $this->getGlobalParameter('source'));  # no referer - this is first request
       
-      if ($this->_fetchDocument($nextTransaction, $httpClient, $startURL))
+      if ($httpClient->fetchDocument($nextTransaction, $startURL))
       {
          @newTransactionStack = $this->_parseDocument($nextTransaction, $httpClient);
                
@@ -988,9 +979,9 @@ sub run ( $ )
    
    if ($continueSession)
    {   
-      $printLogger->print("--- continuing session - threadID=", $this->{'threadID'}, " ---\n");
+      $printLogger->print("--- threadID=", $this->{'threadID'}, " ---\n");
       # get the URL stack remaining for the session
-      @sessionURLstack = $this->_loadSessionURLStack();
+      @sessionURLstack = $this->_loadSessionURLStack();    # load recovery point
       
       $httpClient = HTTPClient::new($this->{'instanceID'});
             
@@ -1011,7 +1002,7 @@ sub run ( $ )
          # if the next URL is defined...
          if ($nextTransaction)
          {
-            if ($this->_fetchDocument($nextTransaction, $httpClient, $startURL))
+            if ($httpClient->fetchDocument($nextTransaction, $startURL))
             {
                @newTransactionStack = $this->_parseDocument($nextTransaction, $httpClient);
                
@@ -1387,7 +1378,8 @@ sub recoverLastSession
    {
       # copy the old file in place of the new one
       copy($sessionName.".session", $instanceID.".session");
-   }      
+      copy($sessionName.".referer", $instanceID.".referer");
+   }   
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -1406,5 +1398,194 @@ sub getGlobalParameter
    
    return $$parametersHashRef{$key};
 }
+
+
+
+# -------------------------------------------------------------------------------------------------
+# saveLastTransaction
+#
+# Purpose:
+#  Debugging
+#
+# Parametrs:
+#  nil
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  $this->{'requestRef'} 
+#  $this->{'responseRef'}
+#
+# Returns:
+#   nil
+#
+sub saveLastTransaction
+
+{
+   my $thisThreadID = shift;
+   my $thisTransactionLabel = shift;
+   my $recoveryPointFileName = "TransactionRecoveryPoints.last";
+   my %transactionList;
+   
+   # load the cookie file name from the recovery file
+   open(SESSION_FILE, "<$recoveryPointFileName") || print "   Can't open last domain suburb file: $!\n"; 
+  
+   $index = 0;
+   # loop through the content of the file
+   while (<SESSION_FILE>) # read a line into $_
+   {
+      # remove end of line marker from $_
+      chomp;
+      # split on null character
+      ($threadID, $transactionLabel) = split /=/;
+    
+      $transactionList{$threadID} = $transactionLabel;
+
+      $index++;                    
+   }
+   
+   close(SESSION_FILE);     
+   
+   # update this threadID
+   $transactionList{$thisThreadID} = $thisTransactionLabel;
+   
+   # save the new file with the thread removed  
+   open(SESSION_FILE, ">$recoveryPointFileName") || print "Can't open file: $!"; 
+   
+   # loop through all of the elements (in reverse so they can be read into a stack)
+   foreach (keys %transactionList)      
+   {        
+      print SESSION_FILE $_."=".$transactionList{$_}."\n";        
+   }
+
+   print "savedLastTransaction$thisThreadID=", $transactionList{$thisThreadID}, "\n";
+   
+   close(SESSION_FILE);          
+}
+
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+# loadRefererStack
+# loads a text file that contains a list of URL's in a stack indicate how to get back to
+# this point
+#
+# Purpose:
+#  multi-session processing
+#
+# Parameters:
+#  (optional) boolean useLast - set to use the last session file
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  nil
+#
+# Returns:
+#  @sessionURLStack
+#    
+sub loadRefererStack
+{
+   my $this = shift;
+   my @refererStack;
+   my $sessionFileName = $this->{'instanceID'}.".referer";
+   my $index = 0;
+   my $httpTransaction;
+      
+   if (-e $sessionFileName)
+   {       
+      open(SESSION_FILE, "<$sessionFileName") || print "Can't open list: $!"; 
+         
+      # read the first line of the file (session ID and status)
+      #$firstLine = <SESSION_FILE>;
+      #chomp;
+      #($sessionName, $sessionStatus) = split /\0/;
+      
+      $index = 0;
+      # loop through the content of the file
+      while (<SESSION_FILE>) # read a line into $_
+      {
+         # remove end of line marker from $_
+         chomp;
+	      # split on null character
+         ($method, $url, $content, $label) = split /\0/;
+	 	 
+         $httpTransaction = HTTPTransaction::new($url, undef, $label);  # NOTE: referer is lost (wasn't saved)
+         
+         if ($content)
+         {
+            $httpTransaction->setEscapedParameters($content);
+         }
+         $refererStack[$index] = $httpTransaction;
+
+         $index++;                    
+      }
+      
+      close(SESSION_FILE);
+   }   
+
+   #$printLogger->print("$index URL's loaded into session stack\n");
+   DebugTools::printList("refererStack", \@refererStack);
+   
+   return @refererStack;
+}
+  
+# -------------------------------------------------------------------------------------------------
+# saveRefererStack
+# saves a text file that contains a list of URL's in a stack that indicate how to get back to the
+# current point (for recovery)
+#
+# Purpose:
+#  multi-session processing
+#
+# Parameters:
+#  @sessionURLStacksqlclient to use
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  nil
+#
+# Returns:
+#  nil
+#    
+sub saveRefererStack
+{
+   my $this = shift;
+   my $refererStackRef = shift;         
+   my $sessionFileName = $this->{'instanceID'}.".referer";
+   my $length;
+   my $url;
+   my $method;
+              	      
+   open(SESSION_FILE, ">$sessionFileName") || print "Can't open list: $!"; 
+           
+   #print SESSION_FILE "$sessionID\0$sessionStatus\n";
+   
+   # loop through all of the elements (in reverse so they can be read into a stack)
+   foreach (@$refererStackRef)      
+   {        
+      $url = $_->getURL();
+      $method = $_->getMethod();
+      if ($method =~ /POST/i)
+      {
+         $escapedContent = $_->getEscapedParameters();
+      }
+      else
+      {
+         $escapedContent = undef; 
+      }
+      $label = $_->getLabel();
+      print SESSION_FILE "$method\0$url\0$escapedContent\0$label\n";        
+   }
+      
+   close(SESSION_FILE);
+   
+   $length = @$refererStackRef;
+}
+
+# -------------------------------------------------------------------------------------------------
 
 
