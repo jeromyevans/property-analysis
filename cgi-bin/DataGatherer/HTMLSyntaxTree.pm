@@ -58,6 +58,7 @@
 #   the function above, but can be used to get a list of defined checkboxes for parsing (for instance,
 #   if the application wants to set or clear certain one automatically)
 # 11 July 2004 - added support for image INPUT type - sets x and y position to 1 in the parameters
+# 12 July 2003 - added getNextAnchor to get the next anchor following the last successful match
 #
 # Description:
 #   Module that accepts an HTTP::Response and runs a parser (HTTP:TreeBuilder)
@@ -1434,6 +1435,8 @@ sub getNextAnchorContainingPattern
 }
 
 
+
+
 # -------------------------------------------------------------------------------------------------
 # sub getAnchorsContainingImageSrc
 # returns a list of anchors within the search constraints that contain the image
@@ -1886,6 +1889,77 @@ sub getNextText
    {
       return undef;
    }   
+}
+
+
+# -------------------------------------------------------------------------------------------------
+# sub getNextAnchor
+# returns the next anchor URL encountered
+# 
+# Purpose:
+#  Parsing file
+#
+# Parameters:
+#  STRING searchPattern
+#
+# Constraints:
+#  $this->{'searchStartIndex'}
+#  $this->{'searchEndIndex'}
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   STRING url of anchor
+#
+ 
+sub getNextAnchor
+
+{
+   my $this = shift; # get this object's instance (always the first parameter)
+   my $searchPattern = shift;
+         
+   my $url = undef;
+   my $anchorsFound = 0;   
+   my $anchorIndex;
+   my $tagContent;   
+   my $elementIndex;
+
+   # this global variable is set immediately after setting the start search 
+   # contraint to overcome the special circumstance that the lastFoundIndex
+   # is the position to start from
+   if ($this->{'startAtLastFoundIndex'})
+   {
+      $offset = 0;
+   }
+   
+   # loop through all of the anchor elements in the page      
+   for ($anchorIndex = 0; $anchorIndex < $this->{'anchorElementIndexLength'}; $anchorIndex++)   
+   {   
+      # this is a bit of a hack because foreach couldn't be used on the
+      # anchorElementIndexRef.  Get the current index into the elementList
+      $_ = $this->{'anchorElementIndexRef'}[$anchorIndex]{'elementIndex'};
+                     
+      # only search from the last successful match
+      if ($_ >= $this->{'lastFoundIndex'}+$offset) 
+      {
+         if ($_ <= $this->{'searchEndIndex'})         
+         {
+            $elementIndex = $_; 
+            
+            # found a match - extract the URL and exit
+            $url = $this->{'elementListRef'}[$elementIndex]{'href'};                     
+            last;                                                                                             
+         }
+         else
+         {
+            # gone further than the end of the search constraint - break out now
+            last;
+         }
+      }
+   }      
+      
+   return $url;     
 }
 
 # -------------------------------------------------------------------------------------------------

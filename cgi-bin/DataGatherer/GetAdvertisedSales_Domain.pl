@@ -137,8 +137,9 @@ if (($parseSuccess) && ($parameters{'url'}) && ($state))
    $myParsers{"ChooseRegions"} = \&parseChooseRegions;
    $myParsers{"ChooseSuburbs"} = \&parseChooseSuburbs;
    
-   $myParsers{"searchdetails"} = \&parseSearchDetails;
-   $myParsers{"search.cfm"} = \&parseSearchForm;
+   $myParsers{"SearchResults"} = \&parseSearchResults;
+   
+   #$myParsers{"searchdetails"} = \&parseSearchDetails;
    
    #$myParsers{"searchquery"} = \&parseSearchQuery;
    #$myParsers{"searchlist"} = \&parseSearchList;
@@ -446,87 +447,115 @@ sub parseChooseSuburbs
    my $noOfTransactions = 0;
       
    $printLogger->print("in parseChooseSuburbs\n");
-      
-   # get the HTML Form instance
-   $htmlForm = $htmlSyntaxTree->getHTMLForm("Form2");
-    
-   if ($htmlForm)
-   {       
-      $actionURL = new URI::URL($htmlForm->getAction(), $url)->abs();
-           
-      %defaultPostParameters = $htmlForm->getPostParameters();            
-      
-      # for all of the suburbs defined in the form, create a transaction to get it
-      $optionsRef = $htmlForm->getSelectionOptions('listboxSuburbs');
-      if ($optionsRef)
-      {         
-         foreach (@$optionsRef)
-         {  
-
-            $value = $_->{'value'};
-            if ($value =~ /All Suburbs/i)
-            {
-               # ignore 'all suburbs' option
-            }
-            else
-            {
-               print $_->{'value'}, "\n";
-               # create a duplicate of the default post parameters
-               my %newPostParameters = %defaultPostParameters;            
-               # and set the value to this option in the selection
-               
-               $newPostParameters{'listboxSuburbs'} = $_->{'value'};
-               #($firstChar, $restOfString) = split(//, $_->{'text'});
-               #print $_->{'text'}, " FC=$firstChar ($startLetter, $endLetter) ";
-               $acceptSuburb = 1;
-               if ($startLetter)
-               {                              
-                  # if the start letter is defined, use it to constrain the range of 
-                  # suburbs processed
-                  # if the first letter if less than the start then reject               
-                  if ($_->{'text'} lt $startLetter)
-                  {
-                     # out of range
-                     $acceptSuburb = 0;
-                   #  print "out of start range\n";
-                  }                              
+   
+ 
+   if ($htmlSyntaxTree->containsTextPattern("Property Search"))
+   {
+       
+      # get the HTML Form instance
+      $htmlForm = $htmlSyntaxTree->getHTMLForm("Form2");
+       
+      if ($htmlForm)
+      {       
+         $actionURL = new URI::URL($htmlForm->getAction(), $url)->abs();
+              
+         %defaultPostParameters = $htmlForm->getPostParameters();            
+         
+         # for all of the suburbs defined in the form, create a transaction to get it
+         $optionsRef = $htmlForm->getSelectionOptions('listboxSuburbs');
+         if ($optionsRef)
+         {         
+            foreach (@$optionsRef)
+            {  
+   
+               $value = $_->{'value'};
+               if ($value =~ /All Suburbs/i)
+               {
+                  # ignore 'all suburbs' option
                }
-                          
-               if ($endLetter)
-               {               
-                  # if the end letter is defined, use it to constrain the range of 
-                  # suburbs processed
-                  # if the first letter is greater than the end then reject       
-                  if ($_->{'text'} gt $endLetter)
-                  {
-                     # out of range
-                     $acceptSuburb = 0;
-                   #  print "out of end range\n";
-                  }               
-               }
-                     
-               if ($acceptSuburb)
-               {         
-                  #print "accepted\n";               
-                  my $newHTTPTransaction = HTTPTransaction::new($actionURL, 'POST', \%newPostParameters, $url);
-               
-                  # add this new transaction to the list to return for processing
-                  $transactionList[$noOfTransactions] = $newHTTPTransaction;
-                  $noOfTransactions++;
+               else
+               {
+                  print $_->{'value'}, "\n";
+                  # create a duplicate of the default post parameters
+                  my %newPostParameters = %defaultPostParameters;            
+                  # and set the value to this option in the selection
+                  
+                  $newPostParameters{'listboxSuburbs'} = $_->{'value'};
+                  #($firstChar, $restOfString) = split(//, $_->{'text'});
+                  #print $_->{'text'}, " FC=$firstChar ($startLetter, $endLetter) ";
+                  $acceptSuburb = 1;
+                  if ($startLetter)
+                  {                              
+                     # if the start letter is defined, use it to constrain the range of 
+                     # suburbs processed
+                     # if the first letter if less than the start then reject               
+                     if ($_->{'text'} lt $startLetter)
+                     {
+                        # out of range
+                        $acceptSuburb = 0;
+                      #  print "out of start range\n";
+                     }                              
+                  }
+                             
+                  if ($endLetter)
+                  {               
+                     # if the end letter is defined, use it to constrain the range of 
+                     # suburbs processed
+                     # if the first letter is greater than the end then reject       
+                     if ($_->{'text'} gt $endLetter)
+                     {
+                        # out of range
+                        $acceptSuburb = 0;
+                      #  print "out of end range\n";
+                     }               
+                  }
+                        
+                  if ($acceptSuburb)
+                  {         
+                     #print "accepted\n";               
+                     my $newHTTPTransaction = HTTPTransaction::new($actionURL, 'POST', \%newPostParameters, $url);
+                  
+                     # add this new transaction to the list to return for processing
+                     $transactionList[$noOfTransactions] = $newHTTPTransaction;
+                     $noOfTransactions++;
+                  }
                }
             }
          }
-      }
+         
+         $printLogger->print("   ParseChooseSuburbs:Creating a transaction for $noOfTransactions suburbs...\n");                             
+      }	  
+      else 
       
-      $printLogger->print("   ParseChooseSuburbs:Creating a transaction for $noOfTransactions suburbs...\n");                             
-   }	  
-   else 
-   {
-      $printLogger->print("   parseChooseSuburbs:Search form not found.\n");
+      {
+         $printLogger->print("   parseChooseSuburbs:Search form not found.\n");
+      }
    }
-   
-   ########################################################********************###########********#####**###*#*#*#*#*#*#
-   $noOfTransactions = 0;
+   else
+   {
+      # for some dodgy reason the action for the form above actually comes back to the same page, put returns
+      # a STATUS 302 object has been moved message, pointing to an alternative page.  Seems like a hack
+      # to overcome a problem with their server.  I don't know why they don't just post to a different address, but anyway,
+      # this code detects the object not found message and follows the alternative URL
+      if ($htmlSyntaxTree->containsTextPattern("Object moved"))
+      {
+         $printLogger->print("   parseChooseSuburbs: following object moved redirection...\n");
+         $anchor = $htmlSyntaxTree->getNextAnchorContainingPattern("here");
+         if ($anchor)
+         {
+            $printLogger->print("   following anchor 'here'\n");
+            $httpTransaction = HTTPTransaction::new($anchor, 'GET', undef, $url);
+            
+            $transactionList[$noOfTransactions] = $httpTransaction;
+            $noOfTransactions++;
+         }
+         
+      }
+      else
+      {
+         $printLogger->print("   parseChooseSuburbs: pattern not found\n");
+      }
+   }
    
    if ($noOfTransactions > 0)
    {      
@@ -700,9 +729,9 @@ sub parseChooseState
 }
 
 # -------------------------------------------------------------------------------------------------
-# parseSearchList
-# parses the htmlsyntaxtree that contains the list of homes generated in response 
-# to a query
+# parseSearchResults
+# parses the htmlsyntaxtree that contains the list of properties generated in response 
+# to to the search query
 #
 # Purpose:
 #  construction of the repositories
@@ -721,7 +750,7 @@ sub parseChooseState
 # Returns:
 #  a list of HTTP transactions or URL's.
 #    
-sub parseSearchList
+sub parseSearchResults
 
 {	
    my $documentReader = shift;
@@ -731,95 +760,108 @@ sub parseSearchList
    my $firstRun = 1;
    
    # --- now extract the property information for this page ---
-   $printLogger->print("inParseSearchList:\n");
+   $printLogger->print("inParseSearchResults:\n");
    #$htmlSyntaxTree->printText();
-   if ($htmlSyntaxTree->containsTextPattern("matching listings"))
+   if ($htmlSyntaxTree->containsTextPattern("Search Results"))
    {         
-      # get all anchors containing any text
-      if ($housesListRef = $htmlSyntaxTree->getAnchorsAndTextContainingPattern("\#"))
-      {  
+      
+      if ($sqlClient->connect())
+      {
+      
+         # loop through something...
          
-         # loop through all the entries in the log cache
-         $printLogger->print("   parseSearchList: checking if unqiue ID exists...\n");
-         if ($sqlClient->connect())
+         # each entry is in it's own table.
+         # the suburb name and price are in an H4 tag
+         # the next non-image anchor href attribute contains the unique ID
+         
+         while ($htmlSyntaxTree->setSearchStartConstraintByTag('h4'))
          {
-            foreach (@$housesListRef)
+            
+            $titleString = $htmlSyntaxTree->getNextText();
+            $sourceURL = $htmlSyntaxTree->getNextAnchor();
+            
+            # not sure why this is needed - it shifts it onto the next property, otherwise it finds the same one twice. 
+            $htmlSyntaxTree->setSearchStartConstraintByTag('h4');
+            
+            # --- extract values ---
+            ($crud, $priceLowerString) = split(/\$/, $titleString, 2);
+            if ($priceLowerString)
             {
-               $sourceID = $$_{'string'};
-               $sourceURL = $$_{'href'};
-              
-               # get the price range - the price is obtained to see if it's changed from the cache'd value.  If the price has
-               # changed then the full record is downloaded again.
-               if ($firstRun)
-               {
-                  $htmlSyntaxTree->setSearchStartConstraintByText($sourceID);
-                  $firstRun = 0;
-               }
-              
-               # get the price range - the price is obtained to see if it's changed from the cache'd value.  If the price has
-               # changed then the full record is downloaded again.              
-               $priceRangeString = $htmlSyntaxTree->getNextTextAfterPattern($sourceID);
-               ($priceLowerString, $priceUpperString) = split /\-/, $priceRangeString;
-               $priceLower = $documentReader->strictNumber($documentReader->parseNumber($priceLowerString, 1));
-               $priceUpper = $documentReader->strictNumber($documentReader->parseNumber($priceUpperString, 1));
-               if ($priceLower)
-               {
-                  $printLogger->print("   printSearchList: checking if price changed (now '$priceLower')\n");
-               }
-               # check if the cache already contains this unique id
-               # $_ is a reference to a hash
-               if (!$advertisedSaleProfiles->checkIfTupleExists($SOURCE_NAME, $sourceID, undef, $priceLower, $priceHigher))                              
-               {   
-                  $printLogger->print("   parseSearchList: adding anchor id ", $sourceID, "...\n");
-                  $printLogger->print("   parseSearchList: url=", $sourceURL, "\n");                  
-                  push @urlList, $sourceURL;
-               }
-               else
-               {
-                  $printLogger->print("   parseSearchList: id ", $sourceID , " in database. Updating last encountered field...\n");
-                  $advertisedSaleProfiles->addEncounterRecord($SOURCE_NAME, $sourceID, undef);
-               }
+               $priceLower = $documentReader->strictNumber($documentReader->parseNumber($priceLowerString));
             }
+            
+            # remove non-numeric characters from the string occuring before the question mark
+            ($sourceID, $crud) = split(/\?/, $sourceURL, 2);            
+            $sourceID =~ s/[^0-9]//gi;
+            
+            #print "sourceID = $sourceID\n";
+                    
+            # check if the cache already contains this unique id
+            
+            if (!$advertisedSaleProfiles->checkIfTupleExists($SOURCE_NAME, $sourceID, undef, $priceLower, undef))                              
+            {   
+               $printLogger->print("   parseSearchResults: adding anchor id ", $sourceID, "...\n");
+               $printLogger->print("   parseSearchResults: url=", $sourceURL, "\n");                  
+                push @urlList, $sourceURL;
+            }
+            else
+            {
+               $printLogger->print("   parseSearchResults: id ", $sourceID , " in database. Updating last encountered field...\n");
+               $advertisedSaleProfiles->addEncounterRecord($SOURCE_NAME, $sourceID, undef);
+            }        
          }
-         else
-         {
-            $printLogger->print("   parseSearchList:", $sqlClient->lastErrorMessage(), "\n");
-         }         
-         
-         # now get the anchor for the NEXT button if it's defined 
-         # this is an image with source 'right_btn'
-         $nextButtonListRef = $htmlSyntaxTree->getAnchorsContainingImageSrc("right_btn");
-                  
-         if ($nextButtonListRef)
-         {            
-            $printLogger->print("   parseSearchList: list includes a 'next' button anchor...\n");
-            @anchorsList = (@urlList, $$nextButtonListRef[0]);
-         }
-         else
-         {            
-            $printLogger->print("   parseSearchList: list has no 'next' button anchor...\n");
-            @anchorsList = @urlList;
-         }                      
-        
-         $length = @anchorsList;         
-         $printLogger->print("   parseSearchList: following $length anchors...\n");         
       }
       else
       {
-         $printLogger->print("   parseSearchList: no anchors found in list.\n");
+         $printLogger->print("   parseSearchResults:", $sqlClient->lastErrorMessage(), "\n");
+      }         
+         
+      # now get the anchor for the NEXT button if it's defined 
+      $nextButtonListRef = $htmlSyntaxTree->getNextAnchorContainingPattern("Next Page");
+                    
+      if ($nextButtonListRef)
+      {            
+         $printLogger->print("   parseSearchResults: list includes a 'next' button anchor...\n");
+         @anchorsList = (@urlList, $$nextButtonListRef[0]);
       }
+      else
+      {            
+         $printLogger->print("   parseSearchResults: list has no 'next' button anchor...\n");
+         @anchorsList = @urlList;
+      }                      
+        
+      $length = @anchorsList;         
+      $printLogger->print("   parseSearchResults: following $length anchors...\n");               
    }	  
    else 
    {
-      $printLogger->print("   parseSearchList: pattern not found\n");
+      # for some dodgy reason the action for the form above actually comes back to the same page, put returns
+      # a STATUS 302 object has been moved message, pointing to an alternative page.  Seems like a hack
+      # to overcome a problem with their server.  I don't know why they don't just post to a different address, but anyway,
+      # this code detects the object not found message and follows the alternative URL
+      if ($htmlSyntaxTree->containsTextPattern("Object moved"))
+      {
+         $printLogger->print("   parseSearchResults: following object moved redirection...\n");
+         $anchor = $htmlSyntaxTree->getNextAnchorContainingPattern("here");
+         if ($anchor)
+         {
+            $printLogger->print("   following anchor 'here'\n");
+            $httpTransaction = HTTPTransaction::new($anchor, 'GET', undef, $url);
+         }
+         
+      }
+      else
+      {
+         $printLogger->print("   parseSearchResults: pattern not found\n");
+      }
    }
    
    # return the list or anchors or empty list   
-   if ($housesListRef)
-   {      
-      return @anchorsList;
-   }
-   else
+   #if ($housesListRef)
+   #{      
+   #   return @anchorsList;
+   #}
+   #else
    {      
       $printLogger->print("   parseSearchList: returning empty anchor list.\n");
       return @emptyList;
