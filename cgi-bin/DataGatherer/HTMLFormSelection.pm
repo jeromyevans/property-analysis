@@ -4,6 +4,10 @@
 # Description:
 #   Module that represents a form SELECTION in an HTMLSyntaxTree
 #
+# History:
+#  1 June 2004 - added function to return the first option for the selection
+#    that can be used in lieu of a default value
+#
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -158,6 +162,33 @@ sub getDefaultValue
    }
            
    return $defaultValue;      
+}
+
+# -------------------------------------------------------------------------------------------------
+# getFirstValue
+#
+# Purpose:
+#  returns the first value for this selection if set (otherwise undef)
+#  (used when a default not available)
+#
+# Parameters:
+#  nil
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   true or false
+#
+sub getFirstValue
+{
+   my $this = shift;
+      
+   my $firstValue = undef;          
+              
+   $firstValue = $this->{'optionListRef'}[0]{'value'};               
+           
+   return $firstValue;      
 }
 
 # -------------------------------------------------------------------------------------------------

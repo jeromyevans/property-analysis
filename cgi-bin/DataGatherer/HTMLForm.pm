@@ -5,6 +5,10 @@
 # Description:
 #   Module that accepts represents a form in an HTMLSyntaxTree
 #
+# History:
+#  1 June 2004 - modified getPostParameters to return the first option in a selection
+# if no default value is defined.  Discovered this is the convention through testing.
+#
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -300,6 +304,11 @@ sub getPostParameters
          {
             $value = $_->getDefaultValue();
          }   
+         else
+         {
+            # 1 June 2004 - value is the first option in the list
+            $value = $_->getFirstValue();
+         }
 
          $postParameters{$name} = $value;            
       }
