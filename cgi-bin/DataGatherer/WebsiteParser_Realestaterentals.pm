@@ -799,7 +799,6 @@ sub parseRealEstateRentalsSearchForm
     
    if ($htmlForm)
    {       
-                     
       # for all of the suburbs defined in the form, create a transaction to get it
       $optionsRef = $htmlForm->getSelectionOptions('u');
       $htmlForm->clearInputValue('is');   # clear checkbox selecting surrounding suburbs
@@ -820,7 +819,7 @@ sub parseRealEstateRentalsSearchForm
 
             # check if the last suburb has been encountered - if it has, then start processing from this point
             $useThisSuburb = $sessionProgressTable->isSuburbAcceptable($_->{'text'});  # 23Jan05
-            
+           
             if ($useThisSuburb)
             {
                if ($_->{'text'} =~ /\*\*\*/i)
@@ -835,6 +834,7 @@ sub parseRealEstateRentalsSearchForm
                   
                   # determine if the suburbname is in the specific letter constraint
                   $acceptSuburb = isSuburbNameInRange($_->{'text'}, $startLetter, $endLetter);  # 23Jan05
+
                }
             }
                      
@@ -843,13 +843,14 @@ sub parseRealEstateRentalsSearchForm
                
                # 23 Jan 05 - another check - see if the suburb has already been 'completed' in this thread
                # if it has been, then don't do it again (avoids special case where servers may return
-               # the same suburb for multiple search variations)
+               # the same suburb for multiple search variations)               
                if (!$sessionProgressTable->hasSuburbBeenProcessed($threadID, $_->{'text'}))
                {  
+
                   #print "accepted\n";               
                   my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url, $parentLabel.".".DocumentReader->trimWhitespace($_->{'text'}));
                   #print $htmlForm->getEscapedParameters(), "\n";
-               
+
                   # add this new transaction to the list to return for processing
                   $transactionList[$noOfTransactions] = $newHTTPTransaction;
                   $noOfTransactions++;
