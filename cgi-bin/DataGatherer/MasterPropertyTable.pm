@@ -9,7 +9,11 @@
 #   Module that encapsulate the MasterPropertyTable database component
 # 
 # History:
-
+#  7 Dec 2004 - extended MasterPropertyTable to include fields for the master associated property details with 
+#    references to each of the components (property details can be associated from more than one source)
+#             - added support for MasterPropertyComponentsXRef table that provides a cross-reference of properties 
+#    to the source components (opposite of the componentOf relationship)
+#
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -82,7 +86,23 @@ my $SQL_CREATE_TABLE_BODY =
     "Street TEXT, ".    
     "SuburbName TEXT, ".
     "SuburbIndex INTEGER UNSIGNED ZEROFILL, ".
-    "State TEXT";
+    "State TEXT, ".
+    "TypeSource INTEGER UNSIGNED ZEROFILL, ".
+    "Type VARCHAR(10), ".
+    "BedroomsSource INTEGER UNSIGNED ZEROFILL, ".
+    "Bedrooms INTEGER, ".
+    "BathroomsSource INTEGER UNSIGNED ZEROFILL, ".
+    "Bathrooms INTEGER, ".
+    "LandSource INTEGER UNSIGNED ZEROFILL, ".
+    "Land INTEGER, ". 
+    "YearBuiltSource INTEGER UNSIGNED ZEROFILL, ".
+    "YearBuilt VARCHAR(5), ".
+    "AdvertisedPriceSource INTEGER UNSIGNED ZEROFILL, ".
+    "AdvertisedPriceLower DECIMAL(10,2), ".
+    "AdvertisedPriceUpper DECIMAL(10,2), ".
+    "AdvertisedWeeklyRentSource INTEGER UNSIGNED ZEROFILL, ".
+    "AdvertisedWeeklyRent DECIMAL(10,2)";        
+    
 my $SQL_CREATE_TABLE_SUFFIX = ")";
            
 sub createTable
@@ -101,7 +121,7 @@ sub createTable
       
       if ($sqlClient->executeStatement($statement))
       {
-         $success = 1;
+         $success = $this->_createXRefTable();
       }
      
    }
@@ -176,7 +196,7 @@ sub lookupPropertyIdentifier
 #  Storing information in the database
 #
 # Parameters:
-# 
+#  hash of component parameters
 #
 # Constraints:
 #  nil
@@ -236,6 +256,8 @@ sub linkRecord
             # lookup the property identifier just created
             $identifier = $this->lookupPropertyIdentifier($parametersRef);  
           
+            # add the XRef to the PropertyComponentXRef table - for faster lookup of property components
+            $this->_addXRef($identifier, $$parametersRef{'Identifier'});
             #print "   created new property($identifier).\n";
 
          }
@@ -268,6 +290,7 @@ sub linkRecord
 #   TRUE (1) if successful, 0 otherwise
 #
 my $SQL_DROP_TABLE_STATEMENT = "DROP TABLE MasterPropertyTable";
+my $SQL_DROP_XREF_TABLE_STATEMENT = "DROP TABLE MasterPropertyComponentsXRef";
         
 sub dropTable
 
@@ -282,7 +305,12 @@ sub dropTable
       
       if ($sqlClient->executeStatement($statement))
       {
-              $success = 1;
+         $statement = $sqlClient->prepareStatement($SQL_DROP_XREF_TABLE_STATEMENT);
+      
+         if ($sqlClient->executeStatement($statement))
+         {
+             $success = 1;
+         }
       }
    }
    
@@ -343,4 +371,119 @@ sub countEntries
 }  
 
 
+
 # -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+# _createXRefTable
+# attempts to create the MasterPropertyComponentsXRef table in the database if it doesn't already exist
+# 
+# Purpose:
+#  Initialising a new database
+#
+# Parameters:
+#  nil
+#
+# Constraints:
+#  nil
+#
+# Uses:
+#  sqlClient
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   TRUE (1) if successful, 0 otherwise
+#
+
+my $SQL_CREATE_XREF_TABLE_PREFIX = "CREATE TABLE IF NOT EXISTS MasterPropertyComponentsXRef (";
+my $SQL_CREATE_XREF_TABLE_BODY = 
+    "DateEntered DATETIME NOT NULL, ".
+    "Identifier INTEGER UNSIGNED ZEROFILL, ".  
+    "hasComponent INTEGER UNSIGNED ZEROFILL";        
+    
+my $SQL_CREATE_XREF_TABLE_SUFFIX = ")";
+           
+sub _createXRefTable
+
+{
+   my $this = shift;
+   my $success = 0;
+   my $sqlClient = $this->{'sqlClient'};
+   
+   if ($sqlClient)
+   {
+      # append table prefix, original table body and table suffix
+      $sqlStatement = $SQL_CREATE_XREF_TABLE_PREFIX.$SQL_CREATE_XREF_TABLE_BODY.$SQL_CREATE_XREF_TABLE_SUFFIX;
+      
+      $statement = $sqlClient->prepareStatement($sqlStatement);
+      
+      if ($sqlClient->executeStatement($statement))
+      {
+         $success = 1;
+      }
+     
+   }
+   
+   return $success;   
+}
+
+# -------------------------------------------------------------------------------------------------
+
+# -------------------------------------------------------------------------------------------------
+# _addXRef
+# adds the XRef between the MasterPropertyTable Identifer and an associated component
+#
+# Purpose:
+#  Storing information in the database
+#
+# Parameters:
+# 
+#
+# Constraints:
+#  nil
+#
+# Uses:
+#  sqlClient
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   TRUE (1) if successful, 0 otherwise
+#
+sub _addXRef
+
+{
+   my $this = shift;
+   my $propertyIdentifier = shift;
+   my $componentIdentifier = shift;
+   
+   my $success = 0;
+   my $sqlClient = $this->{'sqlClient'};
+   my $statementText;
+   my $tableName = "MasterPropertyComponentsXRef";
+     
+   if ($sqlClient)
+   {
+      # add a new record to the master property table
+      $quotedPID = $sqlClient->quote($propertyIdentifier);
+      $quotedCID = $sqlClient->quote($componentIdentifier);
+     
+      $statementText = "INSERT INTO $tableName (DateEntered, Identifier, hasComponent) VALUES (localtime(), $quotedPID, $quotedCID)";
+   
+      #print "statement = ", $statementText, "\n";
+   
+      $statement = $sqlClient->prepareStatement($statementText);
+      
+      if ($sqlClient->executeStatement($statement))
+      {
+         $success = 1;
+      }
+   }
+   
+   return $success;   
+}
+
+# -------------------------------------------------------------------------------------------------
+

@@ -31,7 +31,8 @@
 #  30 November 2004 - added support for the WorkingView and CacheView tables in the maintanence tasks.  The workingView is 
 #   the baseview with aggregated changes applied.  The CacheView is a subset of fields of the original table used to 
 #   improve the speed of queries during DataGathering (checkIfTupleExists).
-#
+#  7 December 2004 - added maintenance task supporting construction of the MasterPropertyComponentsXRef table from the
+#   componentOf relationships in the workingView
 # To do:
 #
 #  RUN PARSERS IN A SEPARATE PROCESS | OR RUN DECODER (eg. htmlsyntaxtree) in separate process - need way to pass data in and out of the
@@ -370,10 +371,19 @@ sub doMaintenance
       $actionOk = 1;
    }
    
-   if ($$parametersRef{'action'} =~ /rebuild/i)
+   if ($$parametersRef{'action'} =~ /_rebuild/i)
    {
       $printLogger->print("---Performing Maintenance - rebuilding!!! ---\n");
       maintenance_Rebuild($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
+      $printLogger->print("---Finished Maintenance---\n");
+      $actionOk = 1;
+   }
+   
+   
+   if ($$parametersRef{'action'} =~ /constructXRef/i)
+   {
+      $printLogger->print("---Performing Maintenance - constructing Property->Components XRef ---\n");
+      maintenance_ConstructXRef($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
       $printLogger->print("---Finished Maintenance---\n");
       $actionOk = 1;
    }
@@ -392,7 +402,8 @@ sub doMaintenance
       $printLogger->print("   constructCacheViewRentals   - rebuild the CacheView table\n");
       $printLogger->print("   constructPropertyTable      - rebuild the MasterPropertyTable\n");
       $printLogger->print("   updateProperties  - process recently added advertisements\n");
-      $printLogger->print("   rebuild           - dump all views and rebuild from raw advertisements (MANUAL CHANGES WILL BE LOST)\n");            
+      $printLogger->print("   constructXRef     - construct the Property->Component XRef table (built by constructPropertyTable automatically)\n");            
+      $printLogger->print("   _rebuild          - dump all views and rebuild from raw advertisements (MANUAL CHANGES WILL BE LOST)\n");            
    }
    
 }
@@ -1065,13 +1076,19 @@ sub maintenance_Rebuild
 {   
    my $printLogger = shift;   
    my $instanceID = shift;
-  
+   my $sqlClient = SQLClient::new(); 
+
    $printLogger->print("--- Rebuilding database views from the unprocessed advertisements --- \n");
 
    # rebuild the cache
-   $printLogger->print("STEP ONE of FIVE: Erasing the ChangeTable...\n");
+   $printLogger->print("STEP ONE of FIVE: Constructing cacheviews...\n");
    maintenance_ConstructCacheViewSales($printLogger, $instanceID);
    maintenance_ConstructCacheViewRentals($printLogger, $instanceID);
+
+    # enable logging to disk by the SQL client
+   $sqlClient->enableLogging($instanceID);
+   
+   $sqlClient->connect();
    
    $printLogger->print("STEP TWO of FIVE: Erasing the ChangeTable...\n");
    $statement = $sqlClient->prepareStatement("delete from ChangeTable_AdvertisedSaleProfiles");
@@ -1093,7 +1110,59 @@ sub maintenance_Rebuild
 
 # -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
-    
+
+# -------------------------------------------------------------------------------------------------
+# iterates through every field of the working view that are a component of a property and updates
+# the XRef table
+sub maintenance_ConstructXRef
+{   
+   my $printLogger = shift;   
+   my $instanceID = shift;
+   my $componentsLinked = 0;
+   
+   $printLogger->print("Rebuilding Property->Component XRef table...\n");
+   
+   my $sqlClient = SQLClient::new(); 
+   my $masterPropertyTable = MasterPropertyTable::new($sqlClient);
+   
+   # enable logging to disk by the SQL client
+   $sqlClient->enableLogging($instanceID);
+   
+   $sqlClient->connect();
+   
+   $printLogger->print("Erasing the PropertyComponentsXRef table...\n");
+   
+   $statement = $sqlClient->prepareStatement("delete from PropertyComponentsXRef");
+   $sqlClient->executeStatement($statement);
+   
+   $printLogger->print("Fetching WORKING VIEW database records that have ComponentOf set...\n");
+   
+   # get the content of the table
+   @selectResult = $sqlClient->doSQLSelect("select Identifier, ComponentOf from WorkingView_AdvertisedSaleProfiles where ComponentOf is not null order by ComponentOf, DateEntered");
+   
+   $length = @selectResult;
+   $printLogger->print("   $length records.\n");
+   
+   $printLogger->print("Updating PropertyComponentsXRef...\n");
+   
+   foreach (@selectResult)
+   {
+      $propertyID = $$_{'ComponentOf'};
+      $componentID = $$_{'Identifier'};
+      $success = $masterPropertyTable->_addXRef($propertyID, $componentID);
+      if ($success)
+      {
+         $componentsLinked++;
+      }
+      
+   }
+   $totalProperties = $masterPropertyTable->countEntries();
+   
+   print "   Linked $componentsLinked components\n";
+   print "PropertyComponentsXRef is synchronised\n";
+
+}
+
 # -------------------------------------------------------------------------------------------------
 
 
