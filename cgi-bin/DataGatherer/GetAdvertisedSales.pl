@@ -11,6 +11,8 @@
 #   9 July 2004 - Merged with LogTable to record encounter information (date last encountered, url, checksum)
 #  to support searches like get records 'still advertised'
 #  25 July 2004 - added support for instanceID and transactionNo parameters in parser callbacks
+#  30 July 2004 - changed parseSearchDetails to only parse the page if it contains 'Property Details' - was encountering 
+#   empty responses from the server that yielded an empty database entry.
 
 #
 # To do:
@@ -379,38 +381,45 @@ sub parseSearchDetails
    my $checksum;   
    $printLogger->print("in parseSearchDetails\n");
    
-   # --- now extract the property information for this page ---
-   #if ($htmlSyntaxTree->containsTextPattern("Suburb Profile"))
-   #{                                    
-   # parse the HTML Syntax tree to obtain the advertised sale information
-   %saleProfiles = extractSaleProfile($documentReader, $htmlSyntaxTree, $url);                  
+   if ($htmlSyntaxTree->containsTextPattern("Property Details"))
+   {
+      # --- now extract the property information for this page ---
+      #if ($htmlSyntaxTree->containsTextPattern("Suburb Profile"))
+      #{                                    
+      # parse the HTML Syntax tree to obtain the advertised sale information
+      %saleProfiles = extractSaleProfile($documentReader, $htmlSyntaxTree, $url);                  
+               
+      # calculate a checksum for the information - the checksum is used to approximately 
+      # identify the uniqueness of the data
+      $checksum = $documentReader->calculateChecksum(\%saleProfiles);
             
-   # calculate a checksum for the information - the checksum is used to approximately 
-   # identify the uniqueness of the data
-   $checksum = $documentReader->calculateChecksum(\%saleProfiles);
-         
-   $printLogger->print("   parseSearchDetails: extracted checksum = ", $checksum, ". Checking log...\n");
-          
-   if ($sqlClient->connect())
-   {		 	 
-      # check if the log already contains this checksum - if it does, assume the tuple already exists                  
-      if ($advertisedSaleProfiles->checkIfTupleExists($SOURCE_NAME, $saleProfiles{'SourceID'}, $checksum, $saleProfiles{'AdvertisedPriceLower'}))
-	   {
-         # this tuple has been previously extracted - it can be dropped
-         # record that it was encountered again
-         $printLogger->print("   parseSearchDetails: identical record already encountered at $SOURCE_NAME.\n");
-	      $advertisedSaleProfiles->addEncounterRecord($SOURCE_NAME, $saleProfiles{'SourceID'}, $checksum);
+      $printLogger->print("   parseSearchDetails: extracted checksum = ", $checksum, ". Checking log...\n");
+             
+      if ($sqlClient->connect())
+      {		 	 
+         # check if the log already contains this checksum - if it does, assume the tuple already exists                  
+         if ($advertisedSaleProfiles->checkIfTupleExists($SOURCE_NAME, $saleProfiles{'SourceID'}, $checksum, $saleProfiles{'AdvertisedPriceLower'}))
+         {
+            # this tuple has been previously extracted - it can be dropped
+            # record that it was encountered again
+            $printLogger->print("   parseSearchDetails: identical record already encountered at $SOURCE_NAME.\n");
+            $advertisedSaleProfiles->addEncounterRecord($SOURCE_NAME, $saleProfiles{'SourceID'}, $checksum);
+         }
+         else
+         {
+            $printLogger->print("   parseSearchDetails: unique checksum/url - adding new record.\n");
+            # this tuple has never been extracted before - add it to the database
+            $advertisedSaleProfiles->addRecord($SOURCE_NAME, \%saleProfiles, $url, $checksum, $instanceID, $transactionNo);         
+         }
       }
       else
       {
-         $printLogger->print("   parseSearchDetails: unique checksum/url - adding new record.\n");
-         # this tuple has never been extracted before - add it to the database
-         $advertisedSaleProfiles->addRecord($SOURCE_NAME, \%saleProfiles, $url, $checksum, $instanceID, $transactionNo);         
+         $printLogger->print("   parseSearchDetails:", $sqlClient->lastErrorMessage(), "\n");
       }
    }
    else
    {
-      $printLogger->print("   parseSearchDetails:", $sqlClient->lastErrorMessage(), "\n");
+      $printLogger->print("   parseSearchDetails: page identifier not found\n";
    }
    
    
