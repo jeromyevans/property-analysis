@@ -23,6 +23,9 @@
 # 27 Oct 04 - had to change the way suburbname is extracted by looking up name in the postcodes
 #  list (only way it can be extracted from a sentance now).  
 #   Loosened the way price is extracted to get the cache check working where price contained a string
+# 8 November 2004 - updates the way the details page is parsed to catch some variations between pages
+#   - descriptions over multiple text entries are concatinated
+#   - improved the code extracting the address that sometimes got the wrong text
 
 # create a table TransactionManagementTable:
 #   index  | suburb | region | state
@@ -138,18 +141,26 @@ sub extractDomainSaleProfile
    }
         
    $htmlSyntaxTree->resetSearchConstraints();
-   $htmlSyntaxTree->setSearchStartConstraintByTag("h2");
-   $htmlSyntaxTree->setSearchEndConstraintByText("Latest Auction"); 
-                 
-   $addressString = $htmlSyntaxTree->getNextText();    # always set, but may not contain the address (just the suburb/town)
+   $htmlSyntaxTree->setSearchStartConstraintByTag("h1");
    
-   # the last word(s) are ALWAYS the suburb name.  As this is known, drop it to leave just street & street number
-   # notes on the regular expression:
-   #  \b is used to match only the whole word
-   #  $ at the end of the expression ensures it matches only at the end of the pattern (this overcomes the case where the
-   #  suburb name is also in the street name
-   $addressString =~ s/\b$suburb\b$//i;
-
+   $firstLine = $htmlSyntaxTree->getNextText();            # usually suburb and price string (used above)
+   #$addressString = $htmlSyntaxTree->getNextText();        # not always set
+   $addressString = $firstLine;
+   
+   # if the address contains the text bedrooms, bathrooms, car spaces or Add to Shortlist then reject it
+   # if the address is blank, sometimes the next pattern is variable
+   if ($addressString =~ /Bedrooms|Bathrooms|Car Spaces|Add to shortlist/i)
+   {
+      $addressString = undef;
+   }
+   
+# Disabled next section 8 Nov 2004.  
+#   # the last word(s) are ALWAYS the suburb name.  As this is known, drop it to leave just street & street number
+#   # notes on the regular expression:
+#   #  \b is used to match only the whole word
+#   #  $ at the end of the expression ensures it matches only at the end of the pattern (this overcomes the case where the
+#   #  suburb name is also in the street name
+#   $addressString =~ s/\b$suburb\b$//i;
    $street= undef;
    $streetNumber = undef;
    @wordList = split(/ /, $addressString);   # parse one word at a time 
@@ -196,6 +207,11 @@ sub extractDomainSaleProfile
    
    $streetNumber = $documentReader->trimWhitespace($streetNumber);
    $street = $documentReader->trimWhitespace($street);
+
+     
+   $htmlSyntaxTree->resetSearchConstraints();
+   $htmlSyntaxTree->setSearchStartConstraintByTag("h2");
+   $htmlSyntaxTree->setSearchEndConstraintByText("Latest Auction"); 
    
    $priceString = $htmlSyntaxTree->getNextTextAfterPattern("Price:");
 
@@ -249,8 +265,24 @@ sub extractDomainSaleProfile
    $landArea = $htmlSyntaxTree->getNextTextAfterPattern("area:");  # optional
    $land = $documentReader->strictNumber($documentReader->parseNumber($landArea));
    
-   $description = $documentReader->trimWhitespace($htmlSyntaxTree->getNextTextAfterPattern("Description"));
-   
+   # 8 Nov 04 - concatenate description (same as done for features)
+   $htmlSyntaxTree->resetSearchConstraints();
+   if (($htmlSyntaxTree->setSearchStartConstraintByText("Description")) && ($htmlSyntaxTree->setSearchEndConstraintByText("Email Agent")))
+   {
+      # append all text in the features section
+      $description = undef;
+      while ($nextPara = $htmlSyntaxTree->getNextText())
+      {
+         if ($description)
+         {
+            $description .= " ";
+         }
+         
+         $description .= $nextPara;
+      }
+      $description = $documentReader->trimWhitespace($description);   
+   }
+      
    $htmlSyntaxTree->resetSearchConstraints();
    if (($htmlSyntaxTree->setSearchStartConstraintByText("Features")) && ($htmlSyntaxTree->setSearchEndConstraintByText("Description")))
    {
@@ -573,7 +605,7 @@ sub parseDomainSalesChooseSuburbs
                         {
                            # out of range
                            $acceptSuburb = 0;
-                      #     print "out of start range\n";
+                           #print $_->{'text'}, " out of start range (start=$startLetter)\n";
                         }                              
                      }
                                 
@@ -586,7 +618,7 @@ sub parseDomainSalesChooseSuburbs
                         {
                            # out of range
                            $acceptSuburb = 0;
-                      #     print "out of end range\n";
+                           #print "'", $_->{'text'}, "' out of end range (end='$endLetter')\n";
                         }               
                      }
                            
