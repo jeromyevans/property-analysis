@@ -26,6 +26,7 @@ require Exporter;
 use DBI;
 use SQLClient;
 use SessionProgressTable;
+use SessionURLStack;
 
 @ISA = qw(Exporter);
 
@@ -206,6 +207,11 @@ sub requestNewThread
                # otherwise it might think it needs to recover from a previous position
                $sessionProgressTable = SessionProgressTable::new($sqlClient);
                $sessionProgressTable->releaseSession($threadID);
+               
+               # IMPORTANT - clear the URLstack previously used for this thread, if still defined
+               # otherwise it might think it needs to recover from that position
+               $sessionURLStack = SessionURLStack::new($sqlClient);
+               $sessionURLStack->releaseSession($threadID);
             
             }
             else

@@ -84,7 +84,9 @@
 #   HTML within the database itself rather than relying only on the HTTPClient logging function 
 #   (for better association)
 #             - added getContent function to support function above
-  
+# 17 Jan 2004 - The TreeBuilder created when parsing the document contains self-references that weren't
+#    being garbage collected.  Now at the end of the parse function content of the TreeBuilder is detroyed 
+#    explicitly releasing the memory.
 #
 # Description:
 #   Module that accepts an HTTP::Response and runs a parser (HTTP:TreeBuilder)
@@ -123,8 +125,6 @@ my ($currentInstance) = undef;
 # PUBLIC
 sub new
 {  
-
-   print "CREATING TREEBUILDER...\n";
 
    my $htmlSyntaxTree = {
 
@@ -248,7 +248,7 @@ sub parseContent
    #      $htmlForm->printForm();
    #   }
    #}
-print "finished traversing.\n"; 
+ 
    # 27 November 2004
    # record the content in the HTMLSyntaxTree for later retrieval if desired - to support logging of
    # HTML within the database itself rather than relying only on the HTTPClient logging function 

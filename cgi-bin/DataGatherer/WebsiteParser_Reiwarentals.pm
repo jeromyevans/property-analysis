@@ -507,9 +507,7 @@ sub parseREIWARentalsSearchQuery
       #%postParameters = $htmlForm->getPostParameters();
       $printLogger->print("   parseSearchQueury: returning POST transaction for continue form.\n");
       #$httpTransaction = HTTPTransaction::new($actionURL, 'POST', \%postParameters, $url);
-      $httpTransaction = HTTPTransaction::new($htmlForm, $url, "TBD");           
-      my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url, $parentLabel.".continue");
-
+      $httpTransaction = HTTPTransaction::new($htmlForm, $url, $parentLabel);           
    }	  
    else 
    {

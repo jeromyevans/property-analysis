@@ -77,6 +77,7 @@ use PrintLogger;
 use File::Copy;
 use StatusTable;
 use SessionProgressTable;
+use SessionURLStack;
 
 my $DEFAULT_USER_AGENT ="Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)";
 
@@ -128,6 +129,11 @@ sub new ($ $ $ $ $ $ $ $ $)
    # access the sessionProgressTable
    $sessionProgressTable = SessionProgressTable::new($sqlClient);
    $$tablesHashRef{'sessionProgressTable'} = $sessionProgressTable;
+   
+   # access the sessionURLStack
+   $sessionURLStack = SessionURLStack::new($sqlClient);
+   $$tablesHashRef{'sessionURLStack'} = $sessionURLStack;
+   
    
    if ($threadID > 0)
    {
@@ -444,137 +450,6 @@ sub _dropTables
 }
 
 # -------------------------------------------------------------------------------------------------
-# loadSessionURLStack
-# loads a text file that contains a list of URL's in a stack that are remaining in the 
-# current session to be processed
-#
-# Purpose:
-#  multi-session processing
-#
-# Parameters:
-#  (optional) boolean useLast - set to use the last session file
-#
-# Constraints:
-#  nil
-#
-# Updates:
-#  nil
-#
-# Returns:
-#  @sessionURLStack
-#    
-sub _loadSessionURLStack
-{
-   my $this = shift;
-   my $useLast = shift;
-   my @sessionURLstack;
-   my $sessionFileName = $this->{'instanceID'}.".session";
-   my $index = 0;
-   my $httpTransaction;
-   
-   if ($useLast)
-   {
-      # 26 Sept 04 - if requested, load last used session file to continue from that one
-      $this->recoverLastSession();
-   }
-   
-   if (-e $sessionFileName)
-   {       
-      open(SESSION_FILE, "<$sessionFileName") || print "Can't open list: $!"; 
-         
-      # read the first line of the file (session ID and status)
-      #$firstLine = <SESSION_FILE>;
-      #chomp;
-      #($sessionName, $sessionStatus) = split /\0/;
-      
-      $index = 0;
-      # loop through the content of the file
-      while (<SESSION_FILE>) # read a line into $_
-      {
-         # remove end of line marker from $_
-         chomp;
-	      # split on null character
-         ($method, $url, $content, $label) = split /\0/;
-	 	 
-         $httpTransaction = HTTPTransaction::new($url, undef, $label);  # NOTE: referer is lost (wasn't saved)
-        
-         if ($content)
-         {
-            $httpTransaction->setEscapedParameters($content);
-         }
-         $sessionURLstack[$index] = $httpTransaction;
-
-         $index++;                    
-      }
-      
-      close(SESSION_FILE);
-   }   
-
-   $printLogger->print("$index URL's loaded into session stack\n");
-   #DebugTools::printList("sessionURLstack", \@sessionURLstack);
-   
-   return @sessionURLstack;
-}
-  
-# -------------------------------------------------------------------------------------------------
-# saveSessionURLStack
-# saves a text file that contains a list of URL's in a stack that are remaining in the 
-# current session to be processed
-#
-# Purpose:
-#  multi-session processing
-#
-# Parameters:
-#  @sessionURLStacksqlclient to use
-#
-# Constraints:
-#  nil
-#
-# Updates:
-#  nil
-#
-# Returns:
-#  nil
-#    
-sub _saveSessionURLStack
-{
-   my $this = shift;
-   my $sessionURLstackRef = shift;         
-   my $sessionFileName = $this->{'instanceID'}.".session";
-   my $length;
-   my $url;
-   my $method;
-              	      
-   open(SESSION_FILE, ">$sessionFileName") || print "Can't open list: $!"; 
-           
-   #print SESSION_FILE "$sessionID\0$sessionStatus\n";
-   
-   # loop through all of the elements (in reverse so they can be read into a stack)
-   foreach (@$sessionURLstackRef)      
-   {        
-      $url = $_->getURL();
-      $method = $_->getMethod();
-      if ($method =~ /POST/i)
-      {
-         $escapedContent = $_->getEscapedParameters();
-      }
-      else
-      {
-         $escapedContent = ""; 
-      }
-      $label = $_->getLabel();
-      print SESSION_FILE "$method\0$url\0$escapedContent\0$label\n";        
-   }
-      
-   close(SESSION_FILE);
-   
-   $length = @$sessionURLstackRef;
-      
-   $printLogger->print("$length URL's saved in session\n");       
-}
-
-
-# -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
@@ -770,46 +645,6 @@ sub _parseDocument
       # determine if there's a parser defined for this url...
       if (($parserIndex = stringContainsPattern($url, \@parserPatternList)) >= 0)
    	{
-	      # print "calling callback #$parserIndex...\n";
-         # save the current transaction position - for recovery
-         #saveLastTransaction($this->{'threadID'}, $nextTransaction->getLabel());
-
-         # referer stack processing....
-         
-         # update the referer stack before processing...
-         # if this URL isn't already in the stack, push it on the end
-         $index = 0;
-         $found = 0;
-         foreach (@refererStack)
-         {
-            # if this referer is already in the stack, drop back to that level
-            if (($thisTransaction->getURL() eq $_->getURL()) && ($thisTransaction->getMethod() eq $_->getMethod()))
-            {
-               # already in stack - truncate the array at this element
-               #print "   truncate list at element ", $index, "\n";
-               $#refererStack = $index;
-               $found = 1;
-               last;
-            }
-            $index++;
-         }
-         # if the element isn't in the stack, push it onto the list
-         if (!$found)
-         {
-            push @refererStack, $thisTransaction;
-         }
-         
-         # print the referer stack...
-         #$index = 0;
-         #foreach (@refererStack)
-         #{
-         #   print "   $index: ", $_->getMethod(), " ", $_->getURL(), "\n";
-         #   $index++;
-         #}
-         #print "     (", $thisTransaction->getMethod(), " ", $thisTransaction->getURL(), ")\n";
-
-         # save the referer stack to disk
-         $this->saveRefererStack(\@refererStack);
          
          ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
          $year += 1900;
@@ -835,9 +670,8 @@ sub _parseDocument
             $this->{'lowMemoryError'} = 1;
          }
             
-         # loop through the transactions in reverse so when they're pushed onto 
-         # the stack the order is maintained for popping.
-         foreach (reverse @callbackTransactionStack)
+         # loop through the transactions to convert from URLs to transactions if necessary
+         foreach (@callbackTransactionStack)
          {
             
             # if this is a refence then it's an HTTPTransaction, otherwise
@@ -902,8 +736,6 @@ sub run ( $ )
    my $index;
    my $url;
    my $nextURL;
-   my @sessionURLStack;
-   my @reversedArray;
    my @newTransactionStack;
    my $nextTransaction;
    
@@ -915,6 +747,7 @@ sub run ( $ )
    my $httpTransaction;
    my $recoveryCookies = undef;
    my $useRecoveryCookies = 0;
+   my $sessionURLStack = $this->getSessionURLStack();
    
     # get the list of pattterns for which a parser has been defined      
    my @parserPatternList = keys %$parserHashRef; 
@@ -951,25 +784,6 @@ sub run ( $ )
       $this->_createTables();
    }
 
-   # 25 July 2004 - start a new session in if continue is selected but a session doesn't exist
-   if ($continueSession)
-   {
-      if (defined $this->{'threadID'})
-      {
-       
-         # the threadID has been specified - continue that thread
-         # 26 Sept 04 - attempt to load the last session file and last cookie file for this session
-         @sessionURLstack = $this->_loadSessionURLStack(1);
-         $this->recoverCookies();
-         
-         $stackSize = @sessionURLstack;
-         if (($stackSize == 0) && ($continueSession))
-         {
-            # there's no session to continue - start a new session
-            $startSession = 1;
-         }
-      }
-   }
    
    if ($startSession)
    {
@@ -984,17 +798,11 @@ sub run ( $ )
       if ($httpClient->fetchDocument($nextTransaction, $startURL))
       {
          @newTransactionStack = $this->_parseDocument($nextTransaction, $httpClient);
-               
-         foreach (@newTransactionStack)
-         {
-            push @sessionURLstack, $_;
-         }                                          
+                    
+         # 23Jan05 - let the database manage the transaction stack order for the thread
+         $sessionURLStack->pushTransactionList($this->{'threadID'}, \@newTransactionStack);
       }
       
-      # save the list in reverse so it can be handled as a stack (pop off one at a time)  
-      #@reversedArray = reverse @sessionURLstack;              
-      $this->_saveSessionURLStack(\@sessionURLstack);
-   
       # start processing off the top of the stack
       $continueSession = 1;
    }
@@ -1003,7 +811,7 @@ sub run ( $ )
    {   
       $printLogger->print("--- threadID=", $this->{'threadID'}, " ---\n");
       # get the URL stack remaining for the session
-      @sessionURLstack = $this->_loadSessionURLStack();    # load recovery point
+      #@sessionURLstack = $this->_loadSessionURLStack();    # load recovery point
       
       $httpClient = HTTPClient::new($this->{'instanceID'});
             
@@ -1013,29 +821,22 @@ sub run ( $ )
       
       $maxURLsPerSession = 0;
       $currentIndex = 0;
-      $urlValid = 1;
-      # OBSOLETE: 19Jan05
-      # 26 Sept 2004 - save the name of the current instance files, used for automatic recovery
-      #$this->saveRecoverySessionName();
-
+      $urlValid = 1;    
       while ((($currentIndex < $maxURLsPerSession) || ($maxURLsPerSession == 0)) && ($urlValid))
-      {  
-         $nextTransaction = pop @sessionURLstack;   
-         
+      {           
+         # 23Jan05 - let the database manage the transaction stack order for the thread
+         $nextTransaction = $sessionURLStack->popNextTransaction($this->{'threadID'});
+
          # if the next URL is defined...
          if ($nextTransaction)
          {
             if ($httpClient->fetchDocument($nextTransaction, $startURL))
             {
+               # parse the document...
                @newTransactionStack = $this->_parseDocument($nextTransaction, $httpClient);
                
-               foreach (@newTransactionStack)
-               {
-                  push @sessionURLstack, $_;
-               }
-               
-               # save the status of the session in case it needs to be continued later
-               $this->_saveSessionURLStack(\@sessionURLstack);
+               # 23Jan05 - let the database manage the transaction stack for the thread
+               $sessionURLStack->pushTransactionList($this->{'threadID'}, \@newTransactionStack);
                   
                # 26 Sept 2004 - If parser took too long, drop out (use for automatic restart after memory flush)
                if ($this->{'lowMemoryError'})
@@ -1052,7 +853,6 @@ sub run ( $ )
          {
 	         # this URL wasn't defined - could be at end of session            
 	         $urlValid = 0;
-            $this->_saveSessionURLStack(\@sessionURLstack);       
          }	       
 
          $currentIndex++;
@@ -1063,17 +863,14 @@ sub run ( $ )
          # 27 Sep 04
          # if the session exits early because of the limit on number of transactions, then exit
          # with an exit code indicating the threadID.
-         $this->_saveSessionURLStack(\@sessionURLstack);
 
          $printLogger->print("end-of-session - exiting with threadID".$this->{'threadID'}."\n");
          # exit and return the thread ID for restart
          exit $this->{'threadID'};  
       }
-   
-      $this->_saveSessionURLStack(\@sessionURLstack);
-      
+         
       # release this threadID - can't be continued as it's finished
-      $this->endRecoveryThread();
+      $this->releaseSessionHistory();
       $printLogger->print("DocumentReader finished\n");
    }
 
@@ -1133,8 +930,9 @@ sub getTableObjects
 # -------------------------------------------------------------------------------------------------
 
 # -------------------------------------------------------------------------------------------------
-# endRecoveryThread
-#  release the threadID from the status table
+# releaseSessionHistory
+#  release the threadID from the status table and all associated history as it's no longer 
+# required (can't continue)
 #
 # Purpose:
 #  start up, status reporting and recovery
@@ -1145,7 +943,7 @@ sub getTableObjects
 # Returns:
 #   nil
 #
-sub endRecoveryThread
+sub releaseSessionHistory
 
 {
    my $this = shift;
@@ -1155,10 +953,12 @@ sub endRecoveryThread
    # get the status table
    $statusTable = $$tablesHashRef{'statusTable'};
    $sessionProgressTable = $$tablesHashRef{'sessionProgressTable'};
+   $sessionURLStack = $$tablesHashRef{'sessionURLStack'};
 
    # update the status table releasing the threadID
    $statusTable->releaseThread($threadID);
    $sessionProgressTable->releaseSession($threadID);
+   $sessionURLStack->releaseSession($threadID);
 }
 
 
@@ -1265,46 +1065,8 @@ sub deleteCookies
    }
 }
 
-# -------------------------------------------------------------------------------------------------
-# recoverLastSession
-#  recovers last session file from from disk by coping the sessionfile into the new session file name - used for automatic restart from this position
-# 
-# Purpose:
-#  Debugging
-#
-# Parametrs:
-# nil
-
-# Constraints:
-#  nil
-#
-# Updates:
-#  $this->{'requestRef'} 
-#  $this->{'responseRef'}
-#
-# Returns:
-#   nil
-#
-sub recoverLastSession
-
-{
-   my $this = shift;
-   my $instanceID = $this->{'instanceID'};
-   $sessionName = $this->{'lastInstanceID'};
-   
-   if ($sessionName)
-   {
-      $printLogger->print("in recoverLastSession (lastInstanceID=$sessionName, newInstanceID=$instanceID):\n");
-      # copy the old file in place of the new one
-      copy($sessionName.".session", $instanceID.".session");
-      copy($sessionName.".referer", $instanceID.".referer");
-   }   
-}
 
 # -------------------------------------------------------------------------------------------------
-
-
-
 # -------------------------------------------------------------------------------------------------
 
 # gets the globalParameter specified
@@ -1351,189 +1113,21 @@ sub getSessionProgressTable
 
 
 # -------------------------------------------------------------------------------------------------
-# saveLastTransaction
-#
-# Purpose:
-#  Debugging
-#
-# Parametrs:
-#  nil
-#
-# Constraints:
-#  nil
-#
-# Updates:
-#  $this->{'requestRef'} 
-#  $this->{'responseRef'}
-#
-# Returns:
-#   nil
-#
-sub saveLastTransaction
 
-{
-   my $thisThreadID = shift;
-   my $thisTransactionLabel = shift;
-   my $recoveryPointFileName = "TransactionRecoveryPoints.last";
-   my %transactionList;
-   
-   # load the cookie file name from the recovery file
-   open(SESSION_FILE, "<$recoveryPointFileName") || print "   Can't open last domain suburb file: $!\n"; 
-  
-   $index = 0;
-   # loop through the content of the file
-   while (<SESSION_FILE>) # read a line into $_
-   {
-      # remove end of line marker from $_
-      chomp;
-      # split on null character
-      ($threadID, $transactionLabel) = split /=/;
-    
-      $transactionList{$threadID} = $transactionLabel;
-
-      $index++;                    
-   }
-   
-   close(SESSION_FILE);     
-   
-   # update this threadID
-   $transactionList{$thisThreadID} = $thisTransactionLabel;
-   
-   # save the new file with the thread removed  
-   open(SESSION_FILE, ">$recoveryPointFileName") || print "Can't open file: $!"; 
-   
-   # loop through all of the elements (in reverse so they can be read into a stack)
-   foreach (keys %transactionList)      
-   {        
-      print SESSION_FILE $_."=".$transactionList{$_}."\n";        
-   }
-
-   print "savedLastTransaction$thisThreadID=", $transactionList{$thisThreadID}, "\n";
-   
-   close(SESSION_FILE);          
-}
-
-# -------------------------------------------------------------------------------------------------
-# -------------------------------------------------------------------------------------------------
-# loadRefererStack
-# loads a text file that contains a list of URL's in a stack indicate how to get back to
-# this point
-#
-# Purpose:
-#  multi-session processing
-#
-# Parameters:
-#  (optional) boolean useLast - set to use the last session file
-#
-# Constraints:
-#  nil
-#
-# Updates:
-#  nil
-#
-# Returns:
-#  @sessionURLStack
-#    
-sub loadRefererStack
+# gets the reference to the sessionURLStack created for the DocumentReader
+sub getSessionURLStack
 {
    my $this = shift;
-   my @refererStack;
-   my $sessionFileName = $this->{'instanceID'}.".referer";
-   my $index = 0;
-   my $httpTransaction;
-      
-   if (-e $sessionFileName)
-   {       
-      open(SESSION_FILE, "<$sessionFileName") || print "Can't open list: $!"; 
-         
-      # read the first line of the file (session ID and status)
-      #$firstLine = <SESSION_FILE>;
-      #chomp;
-      #($sessionName, $sessionStatus) = split /\0/;
-      
-      $index = 0;
-      # loop through the content of the file
-      while (<SESSION_FILE>) # read a line into $_
-      {
-         # remove end of line marker from $_
-         chomp;
-	      # split on null character
-         ($method, $url, $content, $label) = split /\0/;
-	 	 
-         $httpTransaction = HTTPTransaction::new($url, undef, $label);  # NOTE: referer is lost (wasn't saved)
-         
-         if ($content)
-         {
-            $httpTransaction->setEscapedParameters($content);
-         }
-         $refererStack[$index] = $httpTransaction;
-
-         $index++;                    
-      }
-      
-      close(SESSION_FILE);
-   }   
-
-   #$printLogger->print("$index URL's loaded into session stack\n");
-   DebugTools::printList("refererStack", \@refererStack);
+   my $tablesHashRef = $this->{'tablesHashRef'};      
    
-   return @refererStack;
+   # get the table reference
+   $sessionURLStack = $$tablesHashRef{'sessionURLStack'};
+   
+   return $sessionURLStack;
 }
-  
+
 # -------------------------------------------------------------------------------------------------
-# saveRefererStack
-# saves a text file that contains a list of URL's in a stack that indicate how to get back to the
-# current point (for recovery)
-#
-# Purpose:
-#  multi-session processing
-#
-# Parameters:
-#  @sessionURLStacksqlclient to use
-#
-# Constraints:
-#  nil
-#
-# Updates:
-#  nil
-#
-# Returns:
-#  nil
-#    
-sub saveRefererStack
-{
-   my $this = shift;
-   my $refererStackRef = shift;         
-   my $sessionFileName = $this->{'instanceID'}.".referer";
-   my $length;
-   my $url;
-   my $method;
-              	      
-   open(SESSION_FILE, ">$sessionFileName") || print "Can't open list: $!"; 
-           
-   #print SESSION_FILE "$sessionID\0$sessionStatus\n";
-   
-   # loop through all of the elements (in reverse so they can be read into a stack)
-   foreach (@$refererStackRef)      
-   {        
-      $url = $_->getURL();
-      $method = $_->getMethod();
-      if ($method =~ /POST/i)
-      {
-         $escapedContent = $_->getEscapedParameters();
-      }
-      else
-      {
-         $escapedContent = undef; 
-      }
-      $label = $_->getLabel();
-      print SESSION_FILE "$method\0$url\0$escapedContent\0$label\n";        
-   }
-      
-   close(SESSION_FILE);
-   
-   $length = @$refererStackRef;
-}
-
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
 
