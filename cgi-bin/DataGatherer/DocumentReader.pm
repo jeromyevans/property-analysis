@@ -21,6 +21,7 @@
 #              11 April 2004 - added support for referer & user-agent 
 #                            - added full HTTP logging                  
 #              29 April 2004 - added support for PrintLogger
+#              10 July 2004 - added trimWhitespace function
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -129,6 +130,30 @@ sub parseNumber
    $words[$wordIndex] =~ s/,|\$|%|\(|\)|\:|\||\;//g;
   
    return $words[$wordIndex];
+}
+
+# -------------------------------------------------------------------------------------------------
+
+# removes leading and trailing whitespace from parameter
+# parameters:
+#  string to trim
+sub trimWhitespace
+{
+   my $this = shift;
+   my $string = shift;
+   
+   # --- remove leading and trailing whitespace ---
+   # substitute trailing whitespace characters with blank
+   # s/whitespace from end-of-line/all occurances
+   # s/\s*$//g;      
+   $string =~ s/\s*$//g;
+
+   # substitute leading whitespace characters with blank
+   # s/whitespace from start-of-line,multiple single characters/blank/all occurances
+   #s/^\s*//g;    
+   $string =~ s/^\s*//g;
+
+   return $string;     
 }
 
 # -------------------------------------------------------------------------------------------------

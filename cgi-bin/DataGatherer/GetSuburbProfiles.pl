@@ -280,7 +280,7 @@ sub extractSuburbProfile
    $htmlSyntaxTree->setSearchStartConstraintByText("SHOW ALL");   
    $htmlSyntaxTree->setSearchEndConstraintByText("Back to top");
       
-   $suburbProfile{'suburbName'} = $htmlSyntaxTree->getNextTextAfterTag("HR");     
+   $suburbProfile{'suburbName'} = $documentReader->trimWhitespace($htmlSyntaxTree->getNextTextAfterTag("HR"));     
    $suburbProfile{'population'} = $documentReader->parseNumber($htmlSyntaxTree->getNextTextAfterPattern("Population:"));
    $suburbProfile{'medianAge'} = $documentReader->parseNumber($htmlSyntaxTree->getNextTextAfterPattern("Median Age of Residents"));
    $suburbProfile{'percentOver65'} = $documentReader->parseNumber($htmlSyntaxTree->getNextTextAfterPattern("Residents over 65"));
@@ -301,10 +301,10 @@ sub extractSuburbProfile
    $suburbProfile{'medianWeeklyRent'} = $documentReader->parseNumber($htmlSyntaxTree->getNextTextAfterPattern("Median Weekly Rent:"));
    $suburbProfile{'medianMonthlyLoan'} = $documentReader->parseNumber($htmlSyntaxTree->getNextTextAfterPattern("Monthly Loan Repayment:"));
    $suburbProfile{'medianWeeklyIncome'} = $documentReader->parseNumber($htmlSyntaxTree->getNextTextAfterPattern("Weekly Income:"));
-   $suburbProfile{'schools'} = $htmlSyntaxTree->getNextTextAfterPattern("Local Schools:");
-   $suburbProfile{'shops'} = $htmlSyntaxTree->getNextTextAfterPattern("Shops:");
-   $suburbProfile{'trains'} = $htmlSyntaxTree->getNextTextAfterPattern("Train Stations:");
-   $suburbProfile{'buses'} = $htmlSyntaxTree->getNextTextAfterPattern("Bus Services:");    
+   $suburbProfile{'schools'} = $documentReader->trimWhitespace($htmlSyntaxTree->getNextTextAfterPattern("Local Schools:"));
+   $suburbProfile{'shops'} = $documentReader->trimWhitespace($htmlSyntaxTree->getNextTextAfterPattern("Shops:"));
+   $suburbProfile{'trains'} = $documentReader->trimWhitespace($htmlSyntaxTree->getNextTextAfterPattern("Train Stations:"));
+   $suburbProfile{'buses'} = $documentReader->trimWhitespace($htmlSyntaxTree->getNextTextAfterPattern("Bus Services:"));    
    
    return %suburbProfile;  
 }
