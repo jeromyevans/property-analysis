@@ -23,6 +23,7 @@
 #                    - improved parameter parsing to support generic functions.  Generic configuration file for parameters, checking
 #   and reporting of mandatory paramneters.
 # 
+#   NEED TO PREVENT DOMAIN FROM PROCESSING THE SAME SUBURB MULTIPLE TIMES!
 #   NEED TO DO RETRY ON 500 HTTP ERROR
 #   NEED TO ADD SUPPORT FOR SUBURB PROFILES
 #   NEED TO GET AGENT NAME

@@ -12,6 +12,9 @@
 # Date: $Date$
 # $Id$
 #
+# CURRENT PROBLEM IS THAT IF IT BOMBS OUT within a region it goes back to the start
+# of that region for some reason and doesn't seem to recover.  It's related to the
+# sesison file. 
 
 use PrintLogger;
 use CGI qw(:standard);
@@ -31,8 +34,6 @@ use WebsiteParser_Common;
 @ISA = qw(Exporter);
 
 # -------------------------------------------------------------------------------------------------
-
-
 # -------------------------------------------------------------------------------------------------
 # extractSaleProfile
 # extracts property sale information from an HTML Syntax Tree
@@ -509,7 +510,7 @@ sub parseDomainSalesChooseSuburbs
                      #print "actionURL= $actionURL\n";
                      #print "url=$url\n";
          #print "   parseChooseSuburbs::creating transaction...\n";
-                     
+#                     $printLogger->print("  -", $_->{'text'}, "\n");
                      my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url);
                      #print $_->{'value'},"\n";
                      # add this new transaction to the list to return for processing
@@ -653,7 +654,7 @@ sub parseDomainSalesChooseRegions
             $transactionList[$noOfTransactions] = $newHTTPTransaction;
 #            $newHTTPTransaction->printTransaction();
             $noOfTransactions++;
-            
+            #$printLogger->print("+", $_->getValue(), ":\n");
             $htmlForm->clearInputValue($_->getName());
          }
              
@@ -836,13 +837,13 @@ sub parseDomainSalesSearchResults
             ($crud, $sourceID) = split(/\?/, $sourceURL, 2);
             $sourceID =~ s/[^0-9]//gi;
             $sourceURL = new URI::URL($sourceURL, $url)->abs()->as_string();      # convert to absolute
-            
+           
             # check if the cache already contains this unique id            
             if (!$advertisedSaleProfiles->checkIfTupleExists($sourceName, $sourceID, undef, $priceLower, undef))                              
             {   
                $printLogger->print("   parseSearchResults: adding anchor id ", $sourceID, "...\n");
-               $printLogger->print("   parseSearchResults: url=", $sourceURL, "\n");                  
-                push @urlList, $sourceURL;
+               #$printLogger->print("   parseSearchResults: url=", $sourceURL, "\n");                  
+               push @urlList, $sourceURL;
             }
             else
             {

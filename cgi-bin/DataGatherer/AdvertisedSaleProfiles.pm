@@ -460,7 +460,6 @@ sub checkIfTupleExists
       }      
             
       $statement = $sqlClient->prepareStatement($statementText);
-      
       if ($sqlClient->executeStatement($statement))
       {
          # get the array of rows from the table
