@@ -8,6 +8,9 @@
 # Description:
 #   Module that encapsulates an SQL database
 #
+# History
+#  22 May 2004 - added doSqlSelect for generic selection operations
+#
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -372,3 +375,40 @@ sub quote
    
    return $result;  
 }
+
+# -------------------------------------------------------------------------------------------------
+# doSQLSelect
+# runs an sql select statement
+#
+# Purpose:
+#  retreive database information
+#
+# Parameters:
+#  string sqlStatementText - don't forget to QUOTE using sqlClient->quote()
+#
+# Updates:
+#  Nil
+#
+# Returns:
+#   nil
+sub doSQLSelect
+{   
+   my $this = shift;      
+   my $statementText = shift;
+   my $statement;
+   my $found = 0;
+   my $noOfEntries = 0;
+         
+   $statement = $this->prepareStatement($statementText);
+      
+   if ($this->executeStatement($statement))
+   {
+      # get the array of rows from the table
+      @selectResult = $this->fetchResults();                                                
+   }                    
+    
+   
+   return @selectResult;   
+}  
+
+# -------------------------------------------------------------------------------------------------

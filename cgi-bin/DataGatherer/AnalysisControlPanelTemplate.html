@@ -1,0 +1,45 @@
+<html>
+<head>
+<title>Analysis Control Panel</title>
+</head>
+
+<body>
+
+<form action="/cgi-bin/DataGatherer/AnalysisControlPanel.pl" method="get">
+Select property type: <select name='type'>
+<option value='any' default>Any</option>
+<option value='house'>Houses</option>
+<option value='unit'>Units,Villas etc.</option>
+</select><br/>
+Select number of bedrooms: <select name='bedrooms'>
+<option default>Any</option>
+<option>1</option>
+<option>2</option>
+<option>3</option>
+<option>4</option>
+<option>5</option>
+</select>
+<br/>
+Select number of bathrooms: <select name='bathrooms'>
+<option default>Any</option>
+<option>1</option>
+<option>2</option>
+<option>3</option>
+</select><br/>
+Order by: <select name='orderby'>
+<option default value='suburb'>Suburb</option>
+<option value='sale'>Sale Price</option>
+<option value='rent'>Rental Price</option>
+</select>
+<input type='submit' value='Search'>
+</form>
+<br/>
+<hr/>
+<h2>%%Type%% with %%Bedrooms%% bedrooms and %%Bathrooms%% bathrooms...</h2>
+
+%%AnalysisDataTable%%
+
+<hr/>
+</body>
+
+</html>

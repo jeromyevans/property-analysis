@@ -45,7 +45,7 @@ sub printTemplate
 {  
    my $filename = shift;  
    my $registeredCallbacks = shift;
-   my $templateText;
+   my $templateText;   
    
    if (-e $filename)
    {       
@@ -55,25 +55,32 @@ sub printTemplate
       # loop through the content of the file
       while (<TEMPLATE_FILE>) # read a line into $_
       {                          
-         # this substitute looks for a pattern inside %xxx%
-         # if the pattern in is 
-         $currentLine = $_;
-         if ($_ =~ /%%(.*?)%%/gi)
-         {                        
+         # this substitute looks for a pattern inside %%xxx%%
+         $firstPassOfLine = 1;
+         $currentLine = "";         
+         
+         # this regular expression is in a while look so it can be iterated
+         # over the line multiple times until the match failes
+         # Regular expression: find any pattern inside %% %% - the brackets
+         #  are used to store the result of that part of the match in $1         
+         while ($_ =~ /%%(.*?)%%/gi)
+         {                  
+                                       
             # found a match on this line - call the callback if defined...                        
             $callback = $registeredCallbacks->{$1};
             if ($callback)
             {
                $callbackResponse = &$callback();
-               
+                  
                # check if the response is a scaler for direct insertion
                # or a list to insert over multiple lines
-                              
+                                 
                if (!ref($callbackResponse))
                {
                   # and substitute the keyword with the response                                 
-                  $currentLine =~ s{%%(.*?)%%}                 
-                         { $callbackResponse ? $callbackResponse : "" }gsex;                  
+                  # append the text before the match to the current line, and insert
+                  # the response from the callback
+                  $currentLine .= $`.( $callbackResponse ? $callbackResponse : "" );                  
                }
                else
                {
@@ -81,10 +88,15 @@ sub printTemplate
                   $currentLine = "Not implemented";                  
                }
             }
-         }
-
-         #$templateText .= $currentLine;
-         #print $currentLine;         	                        
+            
+            # process the remainder of the line... (this is contained in $')
+            $_ = $';               
+         }        
+         
+         # add the remainder of the line
+         $currentLine .= $_;
+         
+         print $currentLine;         	                        
       }
       
       close(TEMPLATE_FILE);
