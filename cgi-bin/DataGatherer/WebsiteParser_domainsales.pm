@@ -754,7 +754,7 @@ sub parseDomainSalesChooseRegions
             $continueNextRegion = 1;
          }
 
-#         print "restartLastRegion:$restartLastRegion($lastRegion) startFirstRegion:$startFirstRegion continueNextRegion:$continueNextRegion\n";
+         #print "restartLastRegion:$restartLastRegion($lastRegion) startFirstRegion:$startFirstRegion continueNextRegion:$continueNextRegion (cr=$currentRegion)\n";
 
          # loop through all the regions defined in this page - the flags are used to determine 
          # which one to set for the transaction
@@ -763,6 +763,7 @@ sub parseDomainSalesChooseRegions
          $useThisRegion = 0;
          foreach (@$checkboxListRef)
          {   
+            
             if (!$useNextRegion)
             {       
                # if the lastRegion processed with the current checkbox then the next checkbox is the 
@@ -773,7 +774,13 @@ sub parseDomainSalesChooseRegions
                   if ($currentRegion eq $_->getValue())
                   {
                      # this is the last region processed - set a flag to use the next one instead
+          #           print "   **setting useNextRegion to 1 as currentValue = ", $_->getValue(), "\n";
                      $useNextRegion = 1;
+
+                  }
+                  else
+                  {
+          #           print "   **seeking currentRegion ($currentRegion isn't ", $_->getValue(),")\n";
                   }
                }
                else
@@ -789,7 +796,9 @@ sub parseDomainSalesChooseRegions
                   }
                   else
                   {
-                     # otherwise we're continuing tfrom the start
+                     # otherwise we're continuing from the start
+           #          print "   **setting use this region ", $_->getValue(), "\n";
+
                      $useThisRegion = 1;
                   }
                }
@@ -801,7 +810,7 @@ sub parseDomainSalesChooseRegions
                $useThisRegion = 1;
             }
             
-#            print "   ", $_->getValue(), ":useThisRegion:$useThisRegion useNextRegion:$useNextRegion\n";
+            #print "   ", $_->getValue(), ":useThisRegion:$useThisRegion useNextRegion:$useNextRegion\n";
             
             # if this flag has been set in the logic above, a transaction is used for this region
             if ($useThisRegion)
@@ -822,15 +831,19 @@ sub parseDomainSalesChooseRegions
                
                # record which region was last processed in this thread
                saveLastRegion($threadID, $_->getValue());
+               saveLastSuburb($threadID, 'Nil');          # reset to the first suburb in the region
+
                $regionAdded = 1;
                last;   # break out of the checkbox loop
             }
-         }
+         } # end foreach
 
          if (!$regionAdded)
          {
             # no more regions to process - finished
+            
             saveLastRegion($threadID, 'Nil');
+            saveLastSuburb($threadID, 'Nil');          # reset to the first suburb in the region
          }
          else
          {
@@ -1057,14 +1070,14 @@ sub parseDomainSalesSearchResults
             {   
                $printLogger->print("   parseSearchResults: adding anchor id ", $sourceID, "...\n");
                #$printLogger->print("   parseSearchResults: url=", $sourceURL, "\n"); 
-               my $httpTransaction = HTTPTransaction::new($sourceURL, $url, $parentLabel.".".$sourceID);                  
+  #             my $httpTransaction = HTTPTransaction::new($sourceURL, $url, $parentLabel.".".$sourceID);                  
                #push @urlList, $sourceURL;
-               push @urlList, $httpTransaction;
+  #             push @urlList, $httpTransaction;
             }
             else
             {
                $printLogger->print("   parseSearchResults: id ", $sourceID , " in database. Updating last encountered field...\n");
-               $advertisedSaleProfiles->addEncounterRecord($sourceName, $sourceID, undef);
+  #             $advertisedSaleProfiles->addEncounterRecord($sourceName, $sourceID, undef);
             }
          }
          
@@ -1258,7 +1271,7 @@ sub loadLastRegion
 
 
 # -------------------------------------------------------------------------------------------------
-# saveLastRegion
+# saveLastSuburb
 
 #
 # Purpose:
@@ -1282,8 +1295,12 @@ sub saveLastSuburb
 {
    my $thisThreadID = shift;
    my $suburbName = shift;
+   
    my $recoveryPointFileName = "RecoverDomainSuburb.last";
    my %suburbList;
+   my $threadID;
+   my $suburb;
+   my $index;
    
    # load the cookie file name from the recovery file
    open(SESSION_FILE, "<$recoveryPointFileName") || print "   Can't open last domain suburb file: $!\n"; 
@@ -1296,7 +1313,7 @@ sub saveLastSuburb
       chomp;
       # split on null character
       ($threadID, $suburb) = split /=/;
-    
+   
       $suburbList{$threadID} = $suburb;
 
       $index++;                    
@@ -1316,9 +1333,11 @@ sub saveLastSuburb
       print SESSION_FILE $_."=".$suburbList{$_}."\n";        
    }
 
-   print "savedLastSuburb$thisThreadID=", $suburbList{$thisThreadID}, "\n";
-   
    close(SESSION_FILE);          
+
+   print "savedLastSuburb $thisThreadID=", $suburbList{$thisThreadID}, "\n";
+   
+   return 1;
 }
 
 # -------------------------------------------------------------------------------------------------
