@@ -549,6 +549,22 @@ sub _saveSessionURLStack
 # -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
+
+sub regexEscape
+
+{
+   my $string = shift;
+   
+   $string =~ s/\?/ /gi;
+   $string =~ s/\[/ /gi;
+   $string =~ s/\]/ /gi;
+   $string =~ s/\(/ /gi;
+   $string =~ s/\)/ /gi;
+   $string =~ s/\*/ /gi;
+   $string =~ s/\./ /gi;
+   return $string;
+}
+
 # -------------------------------------------------------------------------------------------------
 # stringContainsPattern
 # determines if the specified string contains a pattern from a list. If found, returns the
@@ -577,15 +593,17 @@ sub stringContainsPattern
    my $index = 0;
    my $found = 0;
    
+   $string = regexEscape($string);
    # loop through the list of patterns
    foreach (@$patternListRef)
    {
       # check if the string contains the current pattern
-      if ($string =~ /$_/gi)
+      $comparitor = regexEscape($_);
+      if ($string =~ /$comparitor/gi)
       {
-	 # pattern matched - break out of the loop 
-	 $found = 1;
-	 last;
+         # pattern matched - break out of the loop 
+         $found = 1;
+         last;
       }
       else
       {

@@ -39,90 +39,93 @@ sub prettyPrint
    my $SEEKING_NEXT_ALPHA = 1;
    my $SEEKING_FIRST_ALPHA = 2;
    my $state;
-      
-   # --- remove leading and trailing whitespace ---
-   # substitute trailing whitespace characters with blank
-   # s/whitespace from end-of-line/all occurances
-   # s/\s*$//g;      
-   $inputText =~ s/\s*$//g;
-
-   # substitute leading whitespace characters and leading non-word characters with blank
-   # s/whitespace from start-of-line,multiple single characters/blank/all occurances
-   #s/^\s*//g;    
-   $inputText =~ s/^[\s|\W]*//g; 
-   
-   # change all to lowercase
-   $inputText =~ tr/[A-Z]/[a-z]/;
-   
-   
-   # if the first upper flag has been set then the first alpha character of every word is to be uppercase
-   if ($allFirstUpper)
+    
+   if ($inputText)
    {
-      # this expression works but it seems overly complicated
-      # first it uses a substitution to match a single lowercase character at the start of each word (stored in $1)
-      # then it evaluates the second expression which returns $1 in uppercase using sprintf
-      # the ge modifiers ensure it's performed for every word and instructs the parser to evalutation the expression
-     
-      $inputText =~ s/(\b[a-z])/sprintf("\U$1")/ge;
-      
-      # note the above expression isn't perfect because the boundary of a word isn't just whitespace
-      # for example, the above expresion would make isn't into Isn'T and i'm into I'M.
-      # the expression below corrects for apostraphies.
-      $inputText =~ s/(\'[A-Z])/sprintf("\L$1")/ge;
-   }
-   else
-   {
-      # --- change first character in a sentance to uppercase ---
-      
-      # a state machine is used to perform the special processing of the string.  This should be 
-      # possible using a regular expression but I couldn't get it to work in every case.  
-      # Instead the string is split into a list of characters...
-      @charList = split //, $inputText;
+      # --- remove leading and trailing whitespace ---
+      # substitute trailing whitespace characters with blank
+      # s/whitespace from end-of-line/all occurances
+      # s/\s*$//g;      
+      $inputText =~ s/\s*$//g;
    
-      # then set the state machine to search for the next alpha character.  It sets this to uppercase
-      # then searches for the next alphacharacter following a full-stop and sets that to uppercase, then 
-      # repeats the search
-      $state = $SEEKING_NEXT_ALPHA;
-      $index = 0;
-      foreach (@charList)
+      # substitute leading whitespace characters and leading non-word characters with blank
+      # s/whitespace from start-of-line,multiple single characters/blank/all occurances
+      #s/^\s*//g;    
+      $inputText =~ s/^[\s|\W]*//g; 
+      
+      # change all to lowercase
+      $inputText =~ tr/[A-Z]/[a-z]/;
+      
+      
+      # if the first upper flag has been set then the first alpha character of every word is to be uppercase
+      if ($allFirstUpper)
       {
+         # this expression works but it seems overly complicated
+         # first it uses a substitution to match a single lowercase character at the start of each word (stored in $1)
+         # then it evaluates the second expression which returns $1 in uppercase using sprintf
+         # the ge modifiers ensure it's performed for every word and instructs the parser to evalutation the expression
         
-         if ($state == $SEEKING_DOT)
+         $inputText =~ s/(\b[a-z])/sprintf("\U$1")/ge;
+         
+         # note the above expression isn't perfect because the boundary of a word isn't just whitespace
+         # for example, the above expresion would make isn't into Isn'T and i'm into I'M.
+         # the expression below corrects for apostraphies.
+         $inputText =~ s/(\'[A-Z])/sprintf("\L$1")/ge;
+      }
+      else
+      {
+         # --- change first character in a sentance to uppercase ---
+         
+         # a state machine is used to perform the special processing of the string.  This should be 
+         # possible using a regular expression but I couldn't get it to work in every case.  
+         # Instead the string is split into a list of characters...
+         @charList = split //, $inputText;
+      
+         # then set the state machine to search for the next alpha character.  It sets this to uppercase
+         # then searches for the next alphacharacter following a full-stop and sets that to uppercase, then 
+         # repeats the search
+         $state = $SEEKING_NEXT_ALPHA;
+         $index = 0;
+         foreach (@charList)
          {
-            if ($_ =~ m/[\.|\?|\!]/g)
+           
+            if ($state == $SEEKING_DOT)
             {
-               $state = $SEEKING_NEXT_ALPHA;
-            }
-         }
-         else
-         {
-            if ($state == $SEEKING_NEXT_ALPHA)
-            {
-               if ($_ =~ m/[a-z]/gi)
+               if ($_ =~ m/[\.|\?|\!]/g)
                {
-                  $_ =~ tr/[a-z]/[A-Z]/;
-                  $charList[$index] = $_;
-                  $state = $SEEKING_DOT;
+                  $state = $SEEKING_NEXT_ALPHA;
                }
             }
+            else
+            {
+               if ($state == $SEEKING_NEXT_ALPHA)
+               {
+                  if ($_ =~ m/[a-z]/gi)
+                  {
+                     $_ =~ tr/[a-z]/[A-Z]/;
+                     $charList[$index] = $_;
+                     $state = $SEEKING_DOT;
+                  }
+               }
+            }
+          
+            $index++;
          }
-       
-         $index++;
-      }
-   
-      # rejoin the array into a string
-      $inputText = join '', @charList;
-       
-   }
-  
-   # special cases
-   $inputText =~ s/(i\'m)/I\'m/gi;
-   $inputText =~ s/(\si\s)/ I /gi;
-   $inputText =~ s/(i\'ve)/I\'ve/gi;
-   $inputText =~ s/(i\'d)/I\'d/gi;
       
-   # remove multiple whitespaces
-   $inputText =~ s/\s+/ /g;
+         # rejoin the array into a string
+         $inputText = join '', @charList;
+          
+      }
+     
+      # special cases
+      $inputText =~ s/(i\'m)/I\'m/gi;
+      $inputText =~ s/(\si\s)/ I /gi;
+      $inputText =~ s/(i\'ve)/I\'ve/gi;
+      $inputText =~ s/(i\'d)/I\'d/gi;
+         
+      # remove multiple whitespaces
+      $inputText =~ s/\s+/ /g;
+   }
    
    return $inputText;
 }
@@ -187,7 +190,7 @@ sub validateProfile
    }
    
    # validate property type
-   $$profileRef{'TypeIndex'} = PropertyTypes::mapPropertyType($$profileRef{'Type'});
+   $$profileRef{'TypeIndex'} = PropertyTypes::mapPropertyType($sqlClient, $$profileRef{'Type'});
    
    # validate number of bedrooms
    if (($$profileRef{'Bedrooms'} > 0) || (!defined $$profileRef{'Bedrooms'}))
@@ -346,17 +349,35 @@ sub validateProfile
    # format the text using standard conventions to easy comparison later
    $$profileRef{'SuburbName'} = prettyPrint($$profileRef{'SuburbName'}, 1);
 
-   $$profileRef{'StreetNumber'} = prettyPrint($$profileRef{'StreetNumber'}, 1);
-
-   $$profileRef{'Street'} = prettyPrint($$profileRef{'Street'}, 1);
-
-   $$profileRef{'City'} = prettyPrint($$profileRef{'City'}, 1);
-
-   $$profileRef{'Council'} = prettyPrint($$profileRef{'Council'}, 1);
+   if (defined $$profileRef{'StreetNumber'})
+   {
+      $$profileRef{'StreetNumber'} = prettyPrint($$profileRef{'StreetNumber'}, 1);
+   }
    
-   $$profileRef{'Description'} = prettyPrint($$profileRef{'Description'}, 0);
+   if (defined $$profileRef{'Street'})
+   {
+      $$profileRef{'Street'} = prettyPrint($$profileRef{'Street'}, 1);
+   }
 
-   $$profileRef{'Features'} = prettyPrint($$profileRef{'Features'}, 0);
+   if (defined $$profileRef{'City'})
+   {
+      $$profileRef{'City'} = prettyPrint($$profileRef{'City'}, 1);
+   }
+
+   if (defined $$profileRef{'Council'})
+   {
+      $$profileRef{'Council'} = prettyPrint($$profileRef{'Council'}, 1);
+   }
+   
+   if (defined $$profileRef{'Description'})
+   {
+      $$profileRef{'Description'} = prettyPrint($$profileRef{'Description'}, 0);
+   }
+
+   if (defined $$profileRef{'Features'})
+   {
+      $$profileRef{'Features'} = prettyPrint($$profileRef{'Features'}, 0);
+   }
 }
 
 # -------------------------------------------------------------------------------------------------

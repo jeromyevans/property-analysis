@@ -9,8 +9,8 @@
 #   Module that encapsulate the PropertyTypes database component
 # 
 # History:
+#  13 November 2004 - this module isn't working yet.
 
-#
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -27,6 +27,7 @@ use SQLClient;
 @ISA = qw(Exporter);
 
 #@EXPORT = qw(&parseContent);
+
 
    
 # -------------------------------------------------------------------------------------------------
@@ -87,18 +88,18 @@ sub createTable
    my $success = 0;
    my $sqlClient = $this->{'sqlClient'};
    
-   
+     
    my $DEFINED_PROPERTY_TYPES = {
-      Unknown => 0,
-      Unit => 1,
-      Commercial => 2,
-      Rural => 3,
-      House => 4,
-      Land => 5,
-      Seniors => 6,
-      Tourist => 7,
-      Other => 8
-   };
+         Unknown => 0,
+         Unit => 1,
+         Commercial => 2,
+         Rural => 3,
+         House => 4,
+         Land => 5,
+         Seniors => 6,
+         Tourist => 7,
+         Other => 8
+   }; 
    
    if ($sqlClient)
    {
@@ -222,51 +223,67 @@ sub mapPropertyType
    my $typeDescription = shift;
    my $typeName;
    my $matchedType;
+      
+   my $DEFINED_PROPERTY_TYPES = {
+      Unknown => 0,
+      Unit => 1,
+      Commercial => 2,
+      Rural => 3,
+      House => 4,
+      Land => 5,
+      Seniors => 6,
+      Tourist => 7,
+      Other => 8
+   };
+   
+   while(($key, $value) = each(%DEFINED_PROPERTY_TYPES)) 
+   {
+      print "$key=$value\n";
+   }      
    
    if ($sqlClient)
    {
-      
       if ($typeDescription)
       {
-         if ($typeDescription /Apartment|Flat|Unit|Duplex|Semi|Studio|Terrace|Townhouse|Villa/i) 
+         if ($typeDescription =~ /Apartment|Flat|Unit|Duplex|Semi|Studio|Terrace|Townhouse|Villa/i) 
          {
             # apartment/unit-like properties
-            $typeIndex = $DEFINED_PROPERTY_TYPES{'Unit'}
+            $typeIndex = $$DEFINED_PROPERTY_TYPES{'Unit'}
          }
          else
          {
-             if ($typeDescription /Commercial|Warehouse/i)
+             if ($typeDescription =~ /Commercial|Warehouse/i)
              {
                 # commercial/industrial
                 $typeIndex = $DEFINED_PROPERTY_TYPES{'Commercial'}
              }
              else
              {
-                if ($typeDescription /Farm|Rural/i) 
+                if ($typeDescription =~ /Farm|Rural/i) 
                 {
                    $typeIndex = $DEFINED_PROPERTY_TYPES{'Rural'}
                 }
                 else
                 {
-                   if ($typeDescription /Farm|Rural/i) 
+                   if ($typeDescription =~ /Leisure|Tourist/i) 
                    {
                       $typeIndex = $DEFINED_PROPERTY_TYPES{'Tourist'}
                    }
                    else
                    {
-                      if ($typeDescription /House/i) 
+                      if ($typeDescription =~ /House/i) 
                       {
                           $typeIndex = $DEFINED_PROPERTY_TYPES{'House'}
                       }
                       else
                       {
-                         if ($typeDescription /Land/i) 
+                         if ($typeDescription =~ /Land/i) 
                          {
                              $typeIndex = $DEFINED_PROPERTY_TYPES{'Land'}
                          }
                          else
                          {
-                            if ($typeDescription /Retirement|Seniors/i) 
+                            if ($typeDescription =~ /Retirement|Seniors/i) 
                             {
                                $typeIndex = $DEFINED_PROPERTY_TYPES{'Seniors'}
                             }
@@ -285,7 +302,12 @@ sub mapPropertyType
       {
          $typeIndex = $DEFINED_PROPERTY_TYPES{'Unknown'}
       }
-   }   
+   }
+   else
+   {   
+      $typeIndex = $DEFINED_PROPERTY_TYPES{'Unknown'}
+   }
+   
    return $typeIndex;
 }  
 

@@ -24,28 +24,12 @@
 #   and reporting of mandatory paramneters.
 #  29 October 2004 - added support for DomainRegionsn table - needed to parse domain website
 # 
-#  Domain.State.Region.Suburb
-#   continue should be from that point, not from the URL
-#
-#  NEED TO GET HTTPCLIENT TO ACCEPT AN HTTPTRANSACTION SO ALL INFORMATION ABOUT THE REFERER IS RETAINED
-#    need to record method,url and content when updating the referer stack
-#  INTENT IS TO BE ABLE TO GET BACK TO EXACTLY WHERE IT WAS FROM THE HOME PAGE
-#   it needs a stack of URL's, but only one through each level of processing.
-#    eg. home page, then state url, then region url, then suburb url, then house url
-# Can then recovery from the home page to the last position immediately....
-   #  the referer has this info.
-   #
-#  RUN PARSERS IN A SEPARATE PROCESS 
-#  USE DATABASE TO SPECIFY PARSERS AND RECOVERY POINTS
-#
-#   CONTINUE SESSION DOESN'T WORK IN THE DOMAIN CONTEXT - it starts where it last was without checking the region, etc properly
-#    need it to read the region and suburb every time to keep track of where it is.
-#    I NEED TO THINK ABOUT THE BEST WAY TO HANDLE THIS???
-#
-#   NEED TO PREVENT DOMAIN FROM PROCESSING THE SAME SUBURB MULTIPLE TIMES!
-#   NEED TO GET AGENT NAME
-#   NEED TO FIND WAY FOR PARSERS TO BE SPECIFIED THROUGH THE CONFIG FILE (low priority)
 # To do:
+#
+#  RUN PARSERS IN A SEPARATE PROCESS | OR RUN DECODER (eg. htmlsyntaxtree) in separate process - need way to pass data in and out of the
+#   process though
+#  USE DATABASE TO SPECIFY PARSERS AND RECOVERY POINTS
+#   NEED TO GET AGENT NAME
 #  - front page for monitoring progress
 #
 # ---CVS---
@@ -71,6 +55,7 @@ use WebsiteParser_REIWASales;
 use WebsiteParser_DomainSales;
 use WebsiteParser_REIWARentals;
 use WebsiteParser_REIWASuburbs;
+use WebsiteParser_RealEstateSales;
 use DomainRegions;
 
 # -------------------------------------------------------------------------------------------------    
@@ -148,6 +133,16 @@ if (($parseSuccess) && (!($parameters{'command'} =~ /maintenance/i)))
                $myParsers{"content-suburb.cfm"} = \&parseREIWASuburbLetters;
                $myParsers{"content-suburb-letter"} = \&parseREIWASuburbNames;
                $myParsers{"content-suburb-detail"} = \&parseREIWASuburbProfilePage;
+            }
+            else
+            {
+               if ($parameters{'config'} =~ /RealEstateSales/i)
+               {
+                  $myParsers{"rsearch?a=sf&"} = \&parseRealEstateSearchForm;
+                  $myParsers{"rsearch?a=s&"} = \&parseRealEstateSearchResults;
+                  $myParsers{"rsearch?a=d&"} = \&parseRealEstateSearchResults;
+                  $myParsers{"rsearch?a=o&"} = \&parseRealEstateSearchDetails;
+               }
             }
          }
       }
