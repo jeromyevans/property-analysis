@@ -1,15 +1,12 @@
 #!/usr/bin/perl
-# 8 May 04
-# Parses the detailed real-estate rental information to extract fields
-#  Derived from GetAdvertisedSales
+# 28 Sep 04 - derived from multiple sources
+#  Contains parsers for the REIWA website to obtain advertised sales information
 #
-# 16 May 04 - bugfixed algorithm checking search range
-#           - bugfix parseSearchDetails - was looking for wrong keyword to identify page
+#  all parses must accept two parameters:
+#   $documentReader
+#   $htmlSyntaxTree
 #
-# 10 July 04 - modified to combine log table with AdvertisedSaleProfiles table
-#  25 July 2004 - added support for instanceID and transactionNo parameters in parser callbacks
-
-#
+# The parsers can't access any other global variables, but can use functions in the WebsiteParser_Common module
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -24,141 +21,17 @@ use SuburbProfiles;
 #use URI::URL;
 use DebugTools;
 use DocumentReader;
+use AdvertisedSaleProfiles;
 use AdvertisedRentalProfiles;
+use AgentStatusServer;
+use PropertyTypes;
+use WebsiteParser_Common;
+
+@ISA = qw(Exporter);
 
 # -------------------------------------------------------------------------------------------------
-# loadConfiguration
-# loads a text file that contains a list of parameters for the application
-#
-# Purpose:
-#  configuration
-#
-# Parameters:
-#  nil
-#
-# Updates:
-#  nil
-#
-# Returns:
-#  %parameters
-#    
-sub loadConfiguration
-{ 
-   my $filename = shift;  
-   my $printLogger = shift;
-   my %parameters;
-      
-   if (-e $filename)
-   {             
-      open(PARAM_FILE, "<$filename") || $printLogger->print("   main: Can't open configuration file: $!"); 
-                 
-      # loop through the content of the file
-      while (<PARAM_FILE>) # read a line into $_
-      {
-         # remove end of line marker from $_
-         chomp;
-	      # split on null character
-         ($key, $value) = split /=/;	 	 
-         $parameters{$key} = $value;                                    
-      }
-      
-      close(PARAM_FILE);
-   }      
-   
-   return %parameters;
-}
-
-
-# -------------------------------------------------------------------------------------------------    
-
-my $SOURCE_NAME = "REIWA";
-my $useText = 0;
-my $createTables = 0;
-my $getSuburbProfiles = 0;
-my $dropTables = 0;
-my $continueSession = 0;
-
-# these two parameters are used to limit the letter range of suburbs processed
-# by this instance of the application
-my $startLetter;
-my $endLetter;
-my $agent;
-my $state;
-
-my $useHTML = param('html');
-
-($parseSuccess, $createTables, $startSession, $continueSession, $dropTables) = parseParameters();
-
-if (!$useHTML)
-{
-   $useText = 1;  
-}
-
-if (!$agent)
-{
-   $agent = "GetAdvertisedRentals";
-}
-
-# 25 July 2004 - generate an instance ID based on current time and a random number.  The instance ID is 
-   # used in the name of the logfile
-my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
-$year += 1900;
-$mon++;
-my $randNo = rand 1000;
-my $instanceID = sprintf("%s_%4i%02i%02i%02i%02i%02i_%04i", $agent, $year, $mon, $mday, $hour, $min, $sec, $randNo);
-   
-my $printLogger = PrintLogger::new($agent, $instanceID.".stdout", 1, $useText, $useHTML);
-
-
-$printLogger->printHeader("$agent\n");
-
-# load the configuration file
-my %parameters = loadConfiguration($agent.".config", $printLogger);
-
-if (!$parameters{'url'})
-{
-   $printLogger->print("   main: Configuration file not found\n");
-}
-
-if (($parseSuccess) && ($parameters{'url'}) && ($state))
-{               
-   ($sqlClient, $advertisedRentalProfiles) = initialiseTableObjects();
-   # hash of table objects - the key's are only significant to the local callback functions
- 
-   # enable logging to disk by the SQL client
-   $sqlClient->enableLogging($instanceID);
-   
-   $myTableObjects{'advertisedRentalProfiles'} = $advertisedRentalProfiles;
-   
-   $myParsers{"searchdetails"} = \&parseSearchDetails;
-   $myParsers{"search.cfm"} = \&parseSearchForm;
-   $myParsers{"content-home"} = \&parseHomePage;
-   $myParsers{"searchquery"} = \&parseSearchQuery;
-   $myParsers{"searchlist"} = \&parseSearchList;
-   $myParsers{"CGIPostTest"} = \&parseDisplayResponse;   
-     
-   my $myDocumentReader = DocumentReader::new($agent, $instanceID, $parameters{'url'}, $sqlClient, 
-      \%myTableObjects, \%myParsers, $printLogger);
-   
-   #$myDocumentReader->setProxy("http://netcache.dsto.defence.gov.au:8080");
-   $myDocumentReader->run($createTables, $startSession, $continueSession, $dropTables);
-}
-else
-{
-   if (!$state)
-   {
-      $printLogger->print("   main: state not specified\n");
-   }
-   
-   $printLogger->print("   main: No action requested\n");
-}
-
-$printLogger->printFooter("Finished");
-
-
-# -------------------------------------------------------------------------------------------------
-# extractRentalProfile
-# extracts property rental information from an HTML Syntax Tree
+# extractSaleProfile
+# extracts property sale information from an HTML Syntax Tree
 # assumes the HTML Syntax Tree is in a very specific format
 #
 # Purpose:
@@ -178,41 +51,42 @@ $printLogger->printFooter("Finished");
 # Returns:
 #   hash containing the suburb profile.
 #      
-sub extractRentalProfile
+sub extractREIWASaleProfile
 {
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
    my $url = shift;
    my $text;
    
-   my %rentalProfile;   
-   
+   my %saleProfile;   
+ #  print "   inExtractSaleProfile:\n";
+   # --- set start contraint to Print to get the first line of text (id, suburb, price)
+   #$htmlSyntaxTree->setSearchStartConstraintByText("Print");
+ 
    # --- set start constraint to the 3rd table (table 2) on the page - this is table
-   # --- across the top that MAY contain a title and description            
+   # --- across the top that MAY contain a title and description
+               
    $htmlSyntaxTree->setSearchConstraintsByTable(2);
-   #$htmlSyntaxTree->setSearchStartConstraintByTag("tr");  # next row of table
    $htmlSyntaxTree->setSearchEndConstraintByTag("td"); # until the next table
                     
    $IDSuburbPrice = $htmlSyntaxTree->getNextText();    # always set
    
-   ($sourceID, $suburb, $priceLower, $priceHigher) = split /\-/, $IDSuburbPrice;
-     
-   $gumph = $htmlSyntaxTree->getNextText();            # sometimes undef
-                  
-   # ---   
-   $htmlSyntaxTree->setSearchStartConstraintByTag("tr");  # next row of table
+   #--- followed by optional 'under offer' - ignored
+   
    $htmlSyntaxTree->setSearchStartConstraintByTag("tr");  # next row of table   
    $htmlSyntaxTree->setSearchEndConstraintByTag("table");    
-  
-   $title = $htmlSyntaxTree->getNextText();            # sometimes undef        
-   $description = $htmlSyntaxTree->getNextText();      # sometimes undef        
+   $title = $htmlSyntaxTree->getNextText();            # sometimes undef     
+   
+   $description = $htmlSyntaxTree->getNextText();      # sometimes undef
+   
+   ($sourceID, $suburb, $priceLower, $priceHigher) = split /\-/, $IDSuburbPrice;
    
    # --- set start constraint to the 4th table on the page - this is table
    # --- to the right of the image that contains parameters for the property   
    $htmlSyntaxTree->setSearchConstraintsByTable(3);
    $htmlSyntaxTree->setSearchEndConstraintByTag("table"); # until the next table
    
-   $type = $htmlSyntaxTree->getNextText();                # always set
+   $type = $htmlSyntaxTree->getNextText();             # always set
    
    $bedrooms = $htmlSyntaxTree->getNextTextContainingPattern("Bedrooms");    # sometimes undef  
    ($bedrooms) = split(/ /, $bedrooms);   
@@ -242,6 +116,7 @@ sub extractRentalProfile
    # ------ now parse the extracted values ----
    
    $priceLower =~ s/ //gi;   # remove space in the number if exist
+   $priceHigher =~ s/ //gi;  # remove space in the number if exist
    $sourceID =~ s/ //gi;     # remove spaces if exist
    
    # substitute trailing whitespace characters with blank
@@ -254,77 +129,83 @@ sub extractRentalProfile
    #s/^\s*//g;    
    $suburb =~ s/^\s*//g;
    
-   $rentalProfile{'SourceID'} = $sourceID;      
+   $saleProfile{'SourceID'} = $sourceID;      
    
    if ($suburb) 
    {
-      $rentalProfile{'SuburbName'} = $suburb;
+      $saleProfile{'SuburbName'} = $suburb;
+   }
+   
+   if ($priceHigher) 
+   {
+      $saleProfile{'AdvertisedPriceUpper'} = $documentReader->parseNumber($priceHigher);
    }
    
    if ($priceLower) 
    {
-      $rentalProfile{'AdvertisedWeeklyRent'} = $documentReader->parseNumber($priceLower);
-   }  
+      $saleProfile{'AdvertisedPriceLower'} = $documentReader->parseNumber($priceLower);
+   }
       
    if ($type)
    {
-      $rentalProfile{'Type'} = $type;
+      $saleProfile{'Type'} = $type;
    }
    if ($bedrooms)
    {
-      $rentalProfile{'Bedrooms'} = $documentReader->parseNumber($bedrooms);
+      $saleProfile{'Bedrooms'} = $documentReader->parseNumber($bedrooms);
    }
    if ($bathrooms)
    {
-      $rentalProfile{'Bathrooms'} = $documentReader->parseNumber($bathrooms);
+      $saleProfile{'Bathrooms'} = $documentReader->parseNumber($bathrooms);
    }
    if ($land)
    {
-      $rentalProfile{'Land'} = $documentReader->parseNumber($land);
+      $saleProfile{'Land'} = $documentReader->parseNumber($land);
    }
    if ($yearBuilt)
    {
-      $rentalProfile{'YearBuilt'} = $documentReader->parseNumber($yearBuilt);
+      $saleProfile{'YearBuilt'} = $documentReader->parseNumber($yearBuilt);
    }    
    
    if ($streetNumber)
    {
-      $rentalProfile{'StreetNumber'} = $streetNumber;
+      $saleProfile{'StreetNumber'} = $streetNumber;
    }
    if ($street)
    {
-      $rentalProfile{'Street'} = $street;
+      $saleProfile{'Street'} = $street;
    }
    
    if ($city)
    {
-      $rentalProfile{'City'} = $city;
+      $saleProfile{'City'} = $city;
    }
    
    if ($zone)
    {
-      $rentalProfile{'Council'} = $zone;
+      $saleProfile{'Council'} = $zone;
    }
    
    if ($description)
    {
-      $rentalProfile{'Description'} = $description;
+      $saleProfile{'Description'} = $description;
    }
    
    if ($features)
    {
-      $rentalProfile{'Features'} = $features;
+      $saleProfile{'Features'} = $features;
    }
+
+   $saleProfile{'State'} = $documentReader->getGlobalParameter('state');
+     
+  # DebugTools::printHash("SaleProfile", \%saleProfile);
         
- 
-   $rentalProfile{'State'} = $state;
-       
-   return %rentalProfile;  
+   return %saleProfile;  
 }
 
 # -------------------------------------------------------------------------------------------------
-# parseSearchDetails
-# parses the htmlsyntaxtree to extract advertised rental information and insert it into the database
+# parseREIWASalesSearchDetails
+# parses the htmlsyntaxtree to extract advertised sale information and insert it into the database
 #
 # Purpose:
 #  construction of the repositories
@@ -343,7 +224,7 @@ sub extractRentalProfile
 # Returns:
 #  a list of HTTP transactions or URL's.
 #    
-sub parseSearchDetails
+sub parseREIWASalesSearchDetails
 
 {	
    my $documentReader = shift;
@@ -355,46 +236,57 @@ sub parseSearchDetails
    my $sqlClient = $documentReader->getSQLClient();
    my $tablesRef = $documentReader->getTableObjects();
    
-   my $advertisedRentalProfiles = $$tablesRef{'advertisedRentalProfiles'};
+   my $advertisedSaleProfiles = $$tablesRef{'advertisedSaleProfiles'};
    
-   my %rentalProfiles;
+   my %saleProfiles;
    my $checksum;   
-   
+   my $sourceName = $documentReader->getGlobalParameter('source');
+   my $printLogger = $documentReader->getGlobalParameter('printLogger');
    $printLogger->print("in parseSearchDetails\n");
    
-   # --- now extract the property information for this page ---
-                                       
-   # parse the HTML Syntax tree to obtain the advertised rental information
-   %rentalProfiles = extractRentalProfile($documentReader, $htmlSyntaxTree, $url);                  
+   if ($htmlSyntaxTree->containsTextPattern("Property Details"))
+   {
+      # --- now extract the property information for this page ---
+      #if ($htmlSyntaxTree->containsTextPattern("Suburb Profile"))
+      #{
+      # parse the HTML Syntax tree to obtain the advertised sale information
+      %saleProfiles = extractREIWASaleProfile($documentReader, $htmlSyntaxTree, $url);
+
+      validateProfile($sqlClient, \%saleProfiles);
+#       DebugTools::printHash("sa;e", \%saleProfiles);
+              
+      # calculate a checksum for the information - the checksum is used to approximately 
+      # identify the uniqueness of the data
+      $checksum = $documentReader->calculateChecksum(\%saleProfiles);
             
-   # calculate a checksum for the information - the checksum is used to approximately 
-   # identify the uniqueness of the data
-   $checksum = $documentReader->calculateChecksum(\%rentalProfiles);
-         
-   $printLogger->print("   parseSearchDetails: extracted checksum = ", $checksum, ". Checking log...\n");
-          
-   if ($sqlClient->connect())
-   {		 	 
-      # check if the log already contains this checksum - if it does, assume the tuple already exists                  
-      if ($advertisedRentalProfiles->checkIfTupleExists($SOURCE_NAME, $rentalProfiles{'SourceID'}, $checksum, $rentalProfiles{'AdvertisedWeeklyRent'}))
-	   {
-         # this tuple has been previously extracted - it can be dropped
-         # record in the log that it was encountered again
-         $printLogger->print("   parseSearchDetails: record already encountered at $SOURCE_NAME.\n");
-	      $advertisedRentalProfiles->addEncounterRecord($SOURCE_NAME, $rentalProfiles{'SourceID'}, $checksum);
+      $printLogger->print("   parseSearchDetails: extracted checksum = ", $checksum, ". Checking log...\n");
+             
+      if ($sqlClient->connect())
+      {		 	 
+         # check if the log already contains this checksum - if it does, assume the tuple already exists                  
+         if ($advertisedSaleProfiles->checkIfTupleExists($sourceName, $saleProfiles{'SourceID'}, $checksum, $saleProfiles{'AdvertisedPriceLower'}))
+         {
+            # this tuple has been previously extracted - it can be dropped
+            # record that it was encountered again
+            $printLogger->print("   parseSearchDetails: identical record already encountered at $sourceID.\n");
+            $advertisedSaleProfiles->addEncounterRecord($sourceName, $saleProfiles{'SourceID'}, $checksum);
+         }
+         else
+         {
+            $printLogger->print("   parseSearchDetails: unique checksum/url - adding new record.\n");
+            # this tuple has never been extracted before - add it to the database
+            $advertisedSaleProfiles->addRecord($sourceName, \%saleProfiles, $url, $checksum, $instanceID, $transactionNo);         
+         }
       }
       else
       {
-         $printLogger->print("   parseSearchDetails: unique checksum/url - adding new record.\n");
-         # this tuple has never been extracted before - add it to the database
-         $advertisedRentalProfiles->addRecord($SOURCE_NAME, \%rentalProfiles, $url, $checksum, $instanceID, $transactionNo);         
+         $printLogger->print("   parseSearchDetails:", $sqlClient->lastErrorMessage(), "\n");
       }
    }
    else
    {
-      $printLogger->print("   parseSearchDetails:", $sqlClient->lastErrorMessage(), "\n");
+      $printLogger->print("   parseSearchDetails: page identifier not found\n");
    }
-   	  
    
    
    # return an empty list
@@ -424,7 +316,7 @@ sub parseSearchDetails
 #  a list of HTTP transactions or URL's.
 #    
 # http://public.reiwa.com.au/misc/menutypeOK.cfm?menutype=residential
-sub parseSearchForm
+sub parseREIWASalesSearchForm
 
 {	
    my $documentReader = shift;
@@ -438,6 +330,12 @@ sub parseSearchForm
    my $httpTransaction;
    my @transactionList;
    my $noOfTransactions = 0;
+   my $startLetter = $documentReader->getGlobalParameter('startrange');
+   my $endLetter =  $documentReader->getGlobalParameter('endrange');
+   my $printLogger = $documentReader->getGlobalParameter('printLogger');
+   
+   my @metropolitanAreas = ('Armadale', 'Bassendean', 'Bayswater', 'Belmont', 'Cambridge', 'Canning', 'Chittering', 'Claremont', 'Cockburn', 'Cottesloe', 'East Fremantle', 'Fremantle', 'Gosnells', 'Joondalup', 'Kalamunda', 'Kwinana', 'Melville', 'Mosman Park', 'Mundaring', 'Nedlands', 'Peppermint Grove', 'Perth', 'Rockingham', 'Serpentine-Jarrahdale', 'South Perth', 'Stirling', 'Subiaco', 'Swan', 'Toodyah', 'Victoria Park', 'Vincent', 'Wanneroo');  
+   my %subAreaHash;
       
    $printLogger->print("in parseSearchForm\n");
       
@@ -446,22 +344,28 @@ sub parseSearchForm
     
    if ($htmlForm)
    {       
-      $actionURL = new URI::URL($htmlForm->getAction(), $url)->abs();
-           
-      %defaultPostParameters = $htmlForm->getPostParameters();            
+      $htmlForm->setInputValue('minprice', 1);                # minimum price of 0
+               
+      # --- Perth Metropolitan suburbs ---
+      $htmlForm->setInputValue('MainArea', '1');
+#      print "\nPerth Metropolitan (1):\n";
       
       # for all of the suburbs defined in the form, create a transaction to get it
       $optionsRef = $htmlForm->getSelectionOptions('subdivision');
+      # parse through all those in the perth metropolitan area
       if ($optionsRef)
       {         
          foreach (@$optionsRef)
-         {            
+         {
             # create a duplicate of the default post parameters
-            my %newPostParameters = %defaultPostParameters;            
-            # and set the value to this option in the selection
+            #my %newPostParameters = %defaultPostParameters;
             
-            $newPostParameters{'subdivision'} = $_->{'value'};
-            ($firstChar, $restOfString) = split(//, $_->{'text'});
+            # and set the value to this option in the selection            
+            
+            #$newPostParameters{'subdivision'} = $_->{'value'};
+            $htmlForm->setInputValue('subdivision', $_->{'value'});
+ #           print $_->{'text'}, ", ";
+            #($firstChar, $restOfString) = split(//, $_->{'text'});
             #print $_->{'text'}, " FC=$firstChar ($startLetter, $endLetter) ";
             $acceptSuburb = 1;
             if ($startLetter)
@@ -488,21 +392,93 @@ sub parseSearchForm
                   $acceptSuburb = 0;
                 #  print "out of end range\n";
                }               
-            }            
+            }
                   
             if ($acceptSuburb)
             {         
                #print "accepted\n";               
-               my $newHTTPTransaction = HTTPTransaction::new($actionURL, 'POST', \%newPostParameters, $url);
+               #my $newHTTPTransaction = HTTPTransaction::new($actionURL, 'POST', \%newPostParameters, $url);
+               my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url);
+               #print $htmlForm->getEscapedParameters(), "\n";
             
                # add this new transaction to the list to return for processing
                $transactionList[$noOfTransactions] = $newHTTPTransaction;
                $noOfTransactions++;
             }
          }
-      }
+         
+         $printLogger->print("   ParseSearchForm:Created a transaction for $noOfTransactions metropolitan suburbs...\n");
+      }  # end of metropolitan areas
+               
+      # now do the regional areas
+
+      # construct the hash of subareas 
+      $optionsRef = $htmlForm->getSelectionOptions('SubArea');
+      if ($optionsRef)
+      {         
+         foreach (@$optionsRef)
+         {  
+            # get the value to this option in the selection            
+            if ($_->{'value'} != 0)  # ignore [All]
+            {           
+               $acceptSuburb = 1;
+               if ($startLetter)
+               {                              
+                  # if the start letter is defined, use it to constrain the range of 
+                  # suburbs processed
+                  # if the first letter if less than the start then reject               
+                  if ($_->{'text'} lt $startLetter)
+                  {
+                     # out of range
+                     $acceptSuburb = 0;
+                     #print "out of start range\n";
+                  }                              
+               }
+              
+               if ($endLetter)
+               {               
+                  # if the end letter is defined, use it to constrain the range of 
+                  # suburbs processed
+                  # if the first letter is greater than the end then reject       
+                  if ($_->{'text'} gt $endLetter)
+                  {
+                     # out of range
+                     $acceptSuburb = 0;
+                   #  print "out of end range\n";
+                  }               
+               }
+         
+               if ($acceptSuburb)
+               {
+                  $subAreaHash{$_->{'text'}} = $_->{'value'};
+               }
+            }
+         } # end foreach
+         
+         # remove the hardcoded metropolitan areas from the list of subareas - don't want to process them twice
+         foreach (@metropolitanAreas)
+         {
+            delete $subAreaHash{$_};
+         }
+      } # end building hash of subareas
       
-      $printLogger->print("   ParseSearchForm:Creating a transaction for $noOfTransactions suburbs...\n");                             
+      # loop through all the main areas defined (Perth metropolitan and then regional areas) in alphabetical order
+      foreach (sort(keys %subAreaHash))
+      {      
+         #print "regional area: $_ (", $subAreaHash{$_}, ")\n";
+                     
+         # get the list of subareas hardcoded for this mainarea
+         $htmlForm->clearInputValue('subdivision');              # don't set subdivision                  
+         $htmlForm->setInputValue('MainArea', 0);                # MainArea is [all] 
+         $htmlForm->setInputValue('SubArea', $subAreaHash{$_});
+         my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url);
+         
+         # add this new transaction to the list to return for processing
+         $transactionList[$noOfTransactions] = $newHTTPTransaction;
+         $noOfTransactions++;
+      }      
+      
+      $printLogger->print("   ParseSearchForm:Creating a transaction for $noOfTransactions total areas...\n");                             
    }	  
    else 
    {
@@ -521,7 +497,7 @@ sub parseSearchForm
 }
 
 # -------------------------------------------------------------------------------------------------
-# parseSearchQuery
+# parseREIWASalesSearchQuery
 # parses the htmlsyntaxtree generated in response to a search
 #
 # Purpose:
@@ -542,7 +518,7 @@ sub parseSearchForm
 #  a list of HTTP transactions or URL's.
 #    
 # http://public.reiwa.com.au/misc/searchQuery.cfm???
-sub parseSearchQuery
+sub parseREIWASalesSearchQuery
 
 {	
    my $documentReader = shift;
@@ -554,19 +530,20 @@ sub parseSearchQuery
    my $htmlForm;
    my $actionURL;
    my $httpTransaction;
+   my $printLogger = $documentReader->getGlobalParameter('printLogger');
       
    $printLogger->print("in parseSearchQuery\n");
        
    # if this page contains a form to select whether to proceed or not...
    $htmlForm = $htmlSyntaxTree->getHTMLForm();
-            
    if ($htmlForm)
    {       
-      $actionURL = new URI::URL($htmlForm->getAction(), $url)->abs();
+      #$actionURL = new URI::URL($htmlForm->getAction(), $url)->abs();
            
-      %postParameters = $htmlForm->getPostParameters();
+      #%postParameters = $htmlForm->getPostParameters();
       $printLogger->print("   parseSearchQueury: returning POST transaction for continue form.\n");
-      $httpTransaction = HTTPTransaction::new($actionURL, 'POST', \%postParameters, $url);            
+      #$httpTransaction = HTTPTransaction::new($actionURL, 'POST', \%postParameters, $url);
+      $httpTransaction = HTTPTransaction::new($htmlForm, $url);            
    }	  
    else 
    {
@@ -585,8 +562,8 @@ sub parseSearchQuery
 }
 
 # -------------------------------------------------------------------------------------------------
-# parseHomePage
-# parses the htmlsyntaxtree to extract the link to the Advertised rental page
+# parseREIWASalesHomePage
+# parses the htmlsyntaxtree to extract the link to the Advertised Sale page
 #
 # Purpose:
 #  construction of the repositories
@@ -605,28 +582,30 @@ sub parseSearchQuery
 # Returns:
 #  a list of HTTP transactions or URL's.
 #    
-sub parseHomePage
+sub parseREIWASalesHomePage
 
 {	
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
-   my $url = shift;
-   my $instanceID = shift;
-   my $transactionNo = shift;         
+   my $url = shift;         
+   my $instanceID = shift;   
+   my $transactionNo = shift;
+   
+   my $printLogger = $documentReader->getGlobalParameter('printLogger');
    my @anchors;
    
    # --- now extract the property information for this page ---
    $printLogger->print("inParseHomePage:\n");
    if ($htmlSyntaxTree->containsTextPattern("Real Estate Institute of Western Australia"))
    {                                     
-      $anchor = $htmlSyntaxTree->getNextAnchorContainingPattern("Homes for Rent");
+      $anchor = $htmlSyntaxTree->getNextAnchorContainingPattern("Homes for Sale");
       if ($anchor)
       {
-         $printLogger->print("   following anchor 'Homes for Rent'...\n");
+         $printLogger->print("   following anchor 'Homes for Sale'...\n");
       }
       else
       {
-         $printLogger->print("   anchor 'Homes for Rent' not found!\n");
+         $printLogger->print("   anchor 'Homes for Sale' not found!\n");
       }
    }	  
    else 
@@ -646,7 +625,7 @@ sub parseHomePage
 }
 
 # -------------------------------------------------------------------------------------------------
-# parseSearchList
+# parseREIWASalesSearchList
 # parses the htmlsyntaxtree that contains the list of homes generated in response 
 # to a query
 #
@@ -667,7 +646,7 @@ sub parseHomePage
 # Returns:
 #  a list of HTTP transactions or URL's.
 #    
-sub parseSearchList
+sub parseREIWASalesSearchList
 
 {	
    my $documentReader = shift;
@@ -675,8 +654,11 @@ sub parseSearchList
    my $url = shift;    
    my $instanceID = shift;
    my $transactionNo = shift;
-   my @urlList;
-   my $firstRun = 1;        
+   my $printLogger = $documentReader->getGlobalParameter('printLogger');
+   my $sourceName =  $documentReader->getGlobalParameter('source');
+   
+   my @urlList;        
+   my $firstRun = 1;
    
    # --- now extract the property information for this page ---
    $printLogger->print("inParseSearchList:\n");
@@ -686,41 +668,44 @@ sub parseSearchList
       # get all anchors containing any text
       if ($housesListRef = $htmlSyntaxTree->getAnchorsAndTextContainingPattern("\#"))
       {  
+         
          # loop through all the entries in the log cache
-         $printLogger->print("   parseSearchList: checking if unique ID exists...\n");
+         $printLogger->print("   parseSearchList: checking if unqiue ID exists...\n");
          if ($sqlClient->connect())
          {
             foreach (@$housesListRef)
-            {               
+            {
                $sourceID = $$_{'string'};
                $sourceURL = $$_{'href'};
               
-               # get the price range - the price is obtained to see if it's changed from the cache'd value.  If the price has
-               # changed then the full record is downloaded again.
                if ($firstRun)
                {
                   $htmlSyntaxTree->setSearchStartConstraintByText($sourceID);
                   $firstRun = 0;
                }
-               
-               $priceString = $htmlSyntaxTree->getNextTextAfterPattern($sourceID);
-               $price = $documentReader->strictNumber($documentReader->parseNumber($priceString, 1));
-               if ($price)
+              
+               # get the price range - the price is obtained to see if it's changed from the cache'd value.  If the price has
+               # changed then the full record is downloaded again.              
+               $priceRangeString = $htmlSyntaxTree->getNextTextAfterPattern($sourceID);
+               ($priceLowerString, $priceUpperString) = split /\-/, $priceRangeString;
+               $priceLower = $documentReader->strictNumber($documentReader->parseNumber($priceLowerString, 1));
+               $priceUpper = $documentReader->strictNumber($documentReader->parseNumber($priceUpperString, 1));
+               if ($priceLower)
                {
-                  $printLogger->print("   printSearchList: checking if price changed (now '$price')\n");
+                  $printLogger->print("   printSearchList: checking if price changed (now '$priceLower')\n");
                }
                # check if the cache already contains this unique id
-               # $_ is a reference to a hash                              
-               if (!$advertisedRentalProfiles->checkIfTupleExists($SOURCE_NAME, $sourceID, undef, $price))
+               # $_ is a reference to a hash
+               if (!$advertisedSaleProfiles->checkIfTupleExists($sourceName, $sourceID, undef, $priceLower, $priceHigher))                              
                {   
                   $printLogger->print("   parseSearchList: adding anchor id ", $sourceID, "...\n");
-                  $printLogger->print("   parseSearchList: url=", $sourceURL, "\n");                  
+                  #$printLogger->print("   parseSearchList: url=", $sourceURL, "\n");                  
                   push @urlList, $sourceURL;
                }
                else
-               {                 
-                  $printLogger->print("   parseSearchList: id ", $sourceID , " in database.  Updating last encountered field...\n");
-                  $advertisedRentalProfiles->addEncounterRecord($SOURCE_NAME, $sourceID, undef);
+               {
+                  $printLogger->print("   parseSearchList: id ", $sourceID , " in database. Updating last encountered field...\n");
+                  $advertisedSaleProfiles->addEncounterRecord($sourceName, $sourceID, undef);
                }
             }
          }
@@ -771,7 +756,7 @@ sub parseSearchList
 }
 
 # -------------------------------------------------------------------------------------------------
-# parseDisplayResponse
+# parseREIWASalesDisplayResponse
 # parser that just displays the content of a response 
 #
 # Purpose:
@@ -791,15 +776,16 @@ sub parseSearchList
 # Returns:
 #  a list of HTTP transactions or URL's.
 #    
-sub parseDisplayResponse
+sub parseREIWASalesDisplayResponse
 
 {	
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
-   my $url = shift;       
-   my $instanceID = shift;
+   my $url = shift;         
+   my $instanceID = shift;   
    my $transactionNo = shift;
    my @anchors;
+   my $printLogger = $documentReader->getGlobalParameter('printLogger');
    
    # --- now extract the property information for this page ---
    $printLogger->print("in ParseDisplayResponse:\n");
@@ -811,65 +797,4 @@ sub parseDisplayResponse
 }
 
 # -------------------------------------------------------------------------------------------------
-# initialiseTableObjects
-# instantiates table objects
-#
-# Purpose:
-#  initialisation of the agent
-#
-# Parameters:
-#  nil
-#
-# Constraints:
-#  nil
-#
-# Updates:
-#  Nil
-#
-# Returns:
-#  SQL client
-#  list of tables
-#    
-sub initialiseTableObjects
-{
-   my $sqlClient = SQLClient::new(); 
-   my $advertisedRentalProfiles = AdvertisedRentalProfiles::new($sqlClient);
- 
-   return ($sqlClient, $advertisedRentalProfiles);
-}
-
-# -------------------------------------------------------------------------------------------------
-# -------------------------------------------------------------------------------------------------
-
-sub parseParameters
-{   
-   my $result = 0;
-   
-   my $createTables;
-   my $startSession;
-   my $continueSession;
-   my $dropTables;
-   
-   $createTables = param("create");
-   
-   $startSession = param("start");
-     
-   $continueSession = param("continue");
-   
-   $dropTables = param("drop");
-   
-   $startLetter = param("startrange");
-   $endLetter = param("endrange");
-   $agent = param("agent");
-   $state = param("state");
-
-
-   if (($createTables) || ($startSession) || ($continueSession) || ($dropTables))
-   {
-      $result = 1;
-   }
-   
-   return ($result, $createTables, $startSession, $continueSession, $dropTables);   
-}
-
 

@@ -127,7 +127,7 @@ if (($parseSuccess) && (!($parameters{'command'} =~ /maintenance/i)))
    #{
    #   $myDocumentReader->setProxy($parameters{'proxy'});
    #}
-   $myDocumentReader->setProxy("http://localhost:8080/");
+   #$myDocumentReader->setProxy("http://localhost:8080/");
    $myDocumentReader->run($parameters{'command'});
    
    $sqlClient->disconnect();

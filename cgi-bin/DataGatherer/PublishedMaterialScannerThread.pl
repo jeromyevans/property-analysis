@@ -5,10 +5,10 @@
 # $Id$
 
 # -------------------------------------------------------------------------------------------------
-# runs getAdvertisedSales in a loop continuing the thread until complete
+# runs publishedmaterialscanner in a loop continuing the thread until complete
 $library_path="../cgi-bin/DataGatherer";
 
-my $command = 'perl -I'.$library_path.' '.$library_path.'/GetAdvertisedSales.pl "start=1&'.$ARGV[0].'"';
+my $command = 'perl -I'.$library_path.' '.$library_path.'/PublishedMaterialScanner.pl "command=start&'.$ARGV[0].'"';
 
 $exitValue = 1;
   
@@ -17,10 +17,10 @@ $exitValue = system($command);
 $exitValue = $exitValue / 256;
 print "Exited with value $exitValue\n";
 
-if ($exitValue > 0)
+if (($exitValue > 0) && ($exitValue <= 128))
 {
    # continue the thread until complete
-   my $command = 'perl -I'.$library_path.' '.$library_path.'/GetAdvertisedSales.pl "thread='.$exitValue.'&'.$ARGV[0].'"';
+   my $command = 'perl -I'.$library_path.' '.$library_path.'/PublishedMaterialScanner.pl "command=continue&thread='.$exitValue.'&'.$ARGV[0].'"';
      
    $exitValue = 1;
    do{  
@@ -28,7 +28,7 @@ if ($exitValue > 0)
       $exitValue = system($command);
       $exitValue = $exitValue / 256;
       print "Exited with value $exitValue\n";
-   } while ($exitValue > 0);
+   } while (($exitValue > 0) && ($exitValue <= 128));
 }
 
    
