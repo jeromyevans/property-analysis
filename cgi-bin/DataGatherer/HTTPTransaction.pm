@@ -5,7 +5,20 @@
 # Represents a transaction to implement by the DocumentReader
 #
 # Version 0.0 
-# 
+#
+# History
+#  2 Oct 2004 - modified getEscapedParameters so it so the function can be used without
+# instantiating the object.  Needed to do this for forms that use GET - build the parameter hash, 
+# escape the parameters and add to the end of the URL
+#             - modified constructor to add escaped parameters to a GET URL if parameters have been 
+# specified
+#  4 Oct 2004 - The order of elements defined in a form is now tracked.  The list is used to
+#  maintain the order that the inputs are defined which is consistent with other clients 
+#  (don't appear to be mandatory but added while debugging to get exactly
+#  the same).  The list order is used when generating the escaped parameters for a post.
+#  6 Oct 2004 - changed post parameters to list of hashes instead of hash to allow multiple parameters
+#   with the same name
+#  7 Oct 2004 - changed constructor to accept either an HTML form or a simple URL
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -21,16 +34,15 @@ use URI::Escape;
 use DebugTools;
 
 # -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # new
-# contructor for the HTTP Transaction
+# contructor for the HTTP Transaction that accepts an HTML form
 #
 # Purpose:
 #  parsing multiple documents
 #
 # Parameters:
-#  string URL
-#  string method
-#  reference to hash   
+#  htmlForm
 #  string referer URL
 
 # Constraints:
@@ -42,20 +54,53 @@ use DebugTools;
 # Returns:
 #  HTTPTransaction object
 #    
-sub new ($ $ $ $)
+sub new ($ $)
 {
-   my $url = shift;
-   my $method = shift;
-   my $postParametersRef = shift;
-   my $referer = shift;         
+   my $htmlFormOrGetURL = shift;
+   my $referer = shift;
+   my $escapedParameters = undef;                        
+  
+   if (ref($htmlFormOrGetURL))
+   { 
+      $htmlForm = $htmlFormOrGetURL;
+      $url = new URI::URL($htmlForm->getAction(), $referer)->abs()->as_string();      
+      
+      $method = $htmlForm->getMethod();
+      $escapedParameters = $htmlForm->getEscapedParameters();
+      #print "EscapedParameters:$escapedParameters\n";
+
+      # 2 Oct 2004 - automatically add escaped parameters to GET url if parameters have been specified
+      if (($method EQ 'GET') && ($escapedParameters))
+      {
+         # this is a GET transaction but parameters are specified - add the parameters to the URL
+         # if the URL already contains a ? then just append parameters
+         if ($url =~ /\?/)
+         {
+            $url = $url."&".$escapedParameters;
+         }
+         else
+         {
+            # append a ? on the URL
+            $url = $url."?".$escapedParameters;
+         }
+      }
+      #print "Transaction:$method $url\n";
+
+   }
+   else
+   {
+      # this is a URL for a simple GET transaction
+      $url = new URI::URL($htmlFormOrGetURL, $referer)->abs()->as_string();      
+      $method = 'GET';
+   }
+   
    
    my $httpTransaction = { 
       url => $url,
       method => $method,      
-      postParametersRef => $postParametersRef,
+      escapedParameters => $escapedParameters,
       referer => $referer            
-   };                   
-   
+   };    
    bless $httpTransaction;     
    
    return $httpTransaction;   # return this
@@ -80,7 +125,7 @@ sub methodIsGet
 {
    my $this = shift;
    
-   if ($this->{'method'} eq 'GET')
+   if ($this->{'method'} =~ /GET/i)
    {
       return 1;
    }
@@ -109,7 +154,7 @@ sub methodIsPost
 {
    my $this = shift;
    
-   if ($this->{'method'} eq 'POST')
+   if ($this->{'method'} =~ /POST/i)
    {
       return 1;
    }
@@ -187,10 +232,10 @@ sub getReferer
 }
 
 # -------------------------------------------------------------------------------------------------
-# getPostParameters
+# getEscapedParameters
 #
 # Purpose:
-#  get's the reference to list of post parameters (ref to hash)
+#  get's the post parameters for the transaction
 #
 # Parameters:
 #  nil
@@ -201,18 +246,18 @@ sub getReferer
 # Returns:
 #   string url
 #
-sub getPostParameters
+sub getEscapedParameters
 {
    my $this = shift;
     
-   return $this->{'postParametersRef'};                
+   return $this->{'escapedParameters'};                
 }
 
 # -------------------------------------------------------------------------------------------------
-# getEscapedParameters
+# setEscapedParameters
 #
 # Purpose:
-#  get's the current parameters escaped into a string
+#  set's the post parameters for the transaction
 #
 # Parameters:
 #  nil
@@ -221,37 +266,14 @@ sub getPostParameters
 #  nil
 #
 # Returns:
-#   string containing escaped post parameters
+#   string url
 #
-sub getEscapedParameters
+sub setEscapedParameters
 {
    my $this = shift;
-   my $postParametersRef = $this->{'postParametersRef'};
-   my $unescapedString;     
-   my $escapedString = '';
-   my $isFirst = 1;
-
-   if ($this->methodIsPost())
-   {     
-      while(($key, $value) = each(%$postParametersRef)) 
-      {
-         # generate the string from the next hash pair
-         $escapedKey = uri_escape($key)."=".uri_escape($value);
-                 
-         if (!$isFirst)
-         {
-            # insert an ampersand before the next string           
-            $escapedString .= '&';            
-         }
-         else
-         {
-            $isFirst = 0;
-         }                  
-         
-         $escapedString .= $escapedKey;                                    
-      }      
-   }
-   return $escapedString;
+   my $escapedParameters = shift;
+    
+   $this->{'escapedParameters'} = $escapedParameters;                
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -274,7 +296,10 @@ sub unescapeParameters
    my $this = shift;
    my $escapedString = shift;
    
-   my %postParameters;
+   my @postParameters;
+   my $index = 1;
+   
+   $postParameters[0]{'name'} = '_internalPOSTOrder_';
    
    # split into pairs on the ampersand
    @pairs = split /\&/, $escapedString;
@@ -289,11 +314,47 @@ sub unescapeParameters
          $unescapedKey = uri_unescape($key);
          $unescapedValue = uri_unescape($value);
          
-         $postParameters{$unescapedKey} = $unescapedValue;
+         $postParameters[$index]{'name'} = $unescapedKey;
+         $postParameters[$index]{'value'} = $unescapedValue;
+         
+         # append to the internal order variable 
+         if ($index > 1)
+         {
+            $postParameters[0]{'value'} .= ",";
+         }
+         $postParameters[0]{'value'} .= $unescapedValue;
+         
+         $index++;
       }                  
    }      
    
-   $this->{'postParametersRef'} = \%postParameters;
-   
-   return $escapedString;
+   return @postParameters;
 }
+
+# -------------------------------------------------------------------------------------------------
+
+# -------------------------------------------------------------------------------------------------
+# printTransaction
+#
+# Purpose:
+#  prints information about the transaction
+#
+# Parameters:
+#  nil
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   string url
+#
+sub printTransaction
+{
+   my $this = shift;
+    
+   print $this->{'method'}, " ", $this->{'url'}, "\n";                
+}
+
+# -------------------------------------------------------------------------------------------------
+
+

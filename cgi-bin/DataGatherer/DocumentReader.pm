@@ -43,6 +43,11 @@
 #   which instance to continue
 #              28 Sep 2004 - Include ThreadID as a parameter - used to continue an earlier session's sessionlog and cookies
 #   in a new instance.  Allows multiple instances to run concurrently provided they don't use the same threadID.
+#                          - modified run to specify a command to run instead of a list of booleans indicating the command
+#                          - modified to accept extra parameters at construction that are passed into the callback functions.  Used
+#   to pass global/instance variables into the parsers
+#               7 Oct 2004 - constructor of HTTPTransaction changed to accept an HTML form in order to handle complex post
+#   parameters better.  This class have been updated to use the new constructor.
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -90,7 +95,7 @@ my ($printLogger) = undef;
 # Returns:
 #  DocumentReader object
 #    
-sub new ($ $ $ $ $ $ $ $)
+sub new ($ $ $ $ $ $ $ $ $)
 {
    my $sessionName = shift;
    my $instanceID = shift;
@@ -100,6 +105,7 @@ sub new ($ $ $ $ $ $ $ $)
    my $parserHashRef = shift;     
    my $localPrintLogger = shift;
    my $threadID = shift;
+   my $parametersHashRef = shift;
    
    $printLogger = $localPrintLogger; 
    
@@ -113,7 +119,8 @@ sub new ($ $ $ $ $ $ $ $)
       instanceID => $instanceID,
       transactionNo => 0,
       lowMemoryError => 0,
-      threadID => $threadID
+      threadID => $threadID,
+      parametersHashRef => $parametersHashRef
    };               
    
    bless $documentReader;     
@@ -449,10 +456,11 @@ sub _loadSessionURLStack
 	      # split on null character
          ($method, $url, $content) = split /\0/;
 	 	 
-         $httpTransaction = HTTPTransaction::new($url, $method, undef, undef);
+         $httpTransaction = HTTPTransaction::new($url, undef);  # NOTE: referer is lost (wasn't saved)
+         
          if ($content)
          {
-            $httpTransaction->unescapeParameters($content);
+            $httpTransaction->setEscapedParameters($content);
          }
          $sessionURLstack[$index] = $httpTransaction;
 
@@ -618,7 +626,7 @@ sub _fetchDocument
                         
    if ($nextTransaction->methodIsGet())
    {      
-      $url = new URI::URL($nextTransaction->getURL(), $startURL)->abs();      
+      $url = new URI::URL($nextTransaction->getURL(), $startURL)->abs()->as_string();      
       $printLogger->print("GET: ", $url, "\n");     
       
       $httpClient->setReferer($nextTransaction->getReferer());
@@ -642,14 +650,14 @@ sub _fetchDocument
    {
       if ($nextTransaction->methodIsPost())
       {                                  
-         $url = new URI::URL($nextTransaction->getURL(), $startURL)->abs();      
+         $url = new URI::URL($nextTransaction->getURL(), $startURL)->abs()->as_string();      
          $printLogger->print("POST: ", $url, "\n");                
                   
-         $postParameters = $nextTransaction->getPostParameters();
+         $escapedParameters = $nextTransaction->getEscapedParameters();
          
          $httpClient->setReferer($nextTransaction->getReferer());                 
                
-         if ($httpClient->post($url, $postParameters, $this->{'transactionNo'}))
+         if ($httpClient->post($url, $escapedParameters, $this->{'transactionNo'}))
          {
             $processResponse = 1;
          }
@@ -737,9 +745,11 @@ sub _parseDocument
       # in list)
       foreach (@frameList)
       {
-	      $absoluteURL = new URI::URL($_, $url)->abs();   
+	      $absoluteURL = new URI::URL($_, $url)->abs()->as_string();   
          # create new transaction.  set referer to the base url 
-         $httpTransaction = HTTPTransaction::new($absoluteURL, 'GET', undef, $absoluteURL);
+         # 2 Oct 2004 - bugfix to referer
+         #$httpTransaction = HTTPTransaction::new($absoluteURL, 'GET', undef, $absoluteURL);
+         $httpTransaction = HTTPTransaction::new($absoluteURL, $url);
          
          $frameHTTPClient = HTTPClient::new($this->{'instanceID'});      
          $frameHTTPClient->setProxy($this->{'proxy'});                  
@@ -809,8 +819,8 @@ sub _parseDocument
             else
             {
                # this is a URL to GET - create a new transaction (use the base URL as referrer)
-               $absoluteURL = new URI::URL($_, $url)->abs();		               
-               $httpTransaction = HTTPTransaction::new($absoluteURL, 'GET', undef, $url);
+               $absoluteURL = new URI::URL($_, $url)->abs()->as_string();		               
+               $httpTransaction = HTTPTransaction::new($absoluteURL, $url);
             }
                      	                                          
 		      push @newTransactionStack, $httpTransaction;                                          
@@ -843,13 +853,14 @@ sub _parseDocument
 # Returns:
 #  Nil
 #    
-sub run
+sub run ( $ )
 {
    my $this = shift;
-   my $createTables = shift;
-   my $startSession = shift;
-   my $continueSession = shift;
-   my $dropTables = shift;
+   my $command = shift;
+   my $createTables = 0;
+   my $startSession = 0;
+   my $continueSession = 0;
+   my $dropTables = 0;
    
    my $httpClient;
    my $startURL = $this->{'baseURL'};       
@@ -878,6 +889,33 @@ sub run
     # get the list of pattterns for which a parser has been defined      
    my @parserPatternList = keys %$parserHashRef; 
 
+   # parse the command specified
+   if ($command =~ /start/i)
+   {
+      $startSession = 1;
+   }
+   else
+   {
+      if ($command =~ /continue/i)
+      {
+         $continueSession = 1;
+      }
+      else
+      {
+         if ($command =~ /create/i)
+         {
+            $createTables = 1;
+         }
+         else
+         {
+            if ($command =~ /drop/i)
+            {
+               $dropTables = 1;
+            }
+         }
+      }
+   }
+   
    if ($createTables)
    {
       $this->_createTables();
@@ -911,7 +949,7 @@ sub run
       $httpClient = HTTPClient::new($this->{'instanceID'});      
       $httpClient->setProxy($this->{'proxy'});
       $httpClient->setUserAgent($DEFAULT_USER_AGENT);      
-      $nextTransaction = HTTPTransaction::new($startURL, 'GET', undef, undef);
+      $nextTransaction = HTTPTransaction::new($startURL, undef);  # no referer - this is first request
       
       if ($this->_fetchDocument($nextTransaction, $httpClient, $startURL))
       {
@@ -941,7 +979,7 @@ sub run
             
       $httpClient->setProxy($this->{'proxy'});
       $httpClient->setUserAgent($DEFAULT_USER_AGENT);
-      $maxURLsPerSession = 2;
+      $maxURLsPerSession = 0;
       $currentIndex = 0;
       $urlValid = 1;
       # 26 Sept 2004 - save the name of the current instance files, used for automatic recovery
@@ -981,11 +1019,7 @@ sub run
          {
 	         # this URL wasn't defined - could be at end of session            
 	         $urlValid = 0;
-            $this->_saveSessionURLStack(\@sessionURLstack);
-
-	         $printLogger->print("end-of-session - exiting with threadID".$this->{'threadID'}."\n");
-            # exit and return the thread ID for restart
-            exit $this->{'threadID'};            
+            $this->_saveSessionURLStack(\@sessionURLstack);       
          }	       
 
          $currentIndex++;
@@ -1302,4 +1336,20 @@ sub recoverLastSession
 }
 
 # -------------------------------------------------------------------------------------------------
+
+
+
+# -------------------------------------------------------------------------------------------------
+
+# gets the globalParameter specified
+# used to pass global variables into the parsers
+sub getGlobalParameter
+{
+   my $this = shift;
+   my $key = shift;
+   $parametersHashRef = $this->{'parametersHashRef'};
+   
+   return $$parametersHashRef{$key};
+}
+
 

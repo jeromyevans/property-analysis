@@ -20,6 +20,8 @@
 #  27 Sept 2004 - removed the autosave features for the cookies file.  This was deleting some cookies that I needed
 #   to stay persistent between sessions even though discard was set (to allow a session to continue over multiple instances
 #   of the application running)
+#  2 Oct 2004 - disabled stripping out the parameters from referer for privacy - some servers depended on it
+#  7 Oct 2004 - changed post to accept an encoded content string instead of a hash for the content
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -35,6 +37,7 @@ use HTTP::Request::Common;
 use HTTP::Response; 
 use HTTP::Cookies;
 use URI::Escape;
+use URI::URL;
 
 @ISA = qw(Exporter);
 
@@ -134,6 +137,7 @@ sub setUserAgent
 # (note HTTP uses "referer", not "referrer")
 # Note any parameter data after a ? is stripped out - this is inapproprate
 #  to use in the referer because of privacy.
+# 2 Oct 2004 - disabled above - parameters are kept
 # 
 # Purpose:
 #  Setting up HTTP client
@@ -155,7 +159,9 @@ sub setReferer
    $this = shift;
    $referer = shift;
    
-   ($this->{'referer'}, $dummy) = (split /\?/, $referer, 2);
+   #($this->{'referer'}, $dummy) = (split /\?/, $referer, 2);
+   # 2 Oct 2004 - disabled stripping out the parameters - some servers depended on it
+   $this->{'referer'} = $referer;
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -181,20 +187,29 @@ sub _initialiseHeader
 {   
    my $this = shift;
    my $request = shift;
-   
-   $request->push_header(Accept => 'text/plain,text/html,text/xml');
+
+   #$request->push_header(Accept => 'text/plain,text/html,text/xml');
+   $request->push_header('Accept' => 'text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,text/plain;q=0.8,image/png,*/*;q=0.5');
    $request->push_header('Accept-Charset' => 'ISO-8859-1,utf-8');
-   $request->push_header('Accept-Language' => 'en,en-us');   
+   $request->push_header('Accept-Language' => 'en-us, en');   
    
    if ($this->{'agentName'})
    {
       $request->push_header('User-Agent' => $this->{'agentName'});
    }
-    
+
    if ($this->{'referer'})
    {      
-      $request->push_header('Referer' => $this->{'referer'});
+      $referer = $this->{'referer'};
+      
+      #2Oct04: escape the ? in the referer path before using it (otherwise push_header's regular expression crashes) 
+      $referer =~ s/\?/\?/gi;
+ 
+      $request->push_header('Referer' => $referer);
    }
+
+   
+
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -227,6 +242,58 @@ sub setProxy
 }
 
 # -------------------------------------------------------------------------------------------------
+# prepareRequestHeader
+# sets fields for an HTTP request - for use prior to construction of the request object
+#  cookies and content aren't set (only basic values) 
+# 
+# Purpose:
+#  Retreiving a document via HTTP
+#
+# Parametrs:
+#  STRING url associated with the request (used to get host name)
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   header object
+#
+sub prepareRequestHeader
+
+{
+   my $this = shift;
+   my $url = shift;   
+   
+   $header = HTTP::Headers->new();
+   
+   # extract host name from the URL (used in the header)
+   $host = new URI::URL($url)->host();
+   
+   #$header->header(Accept => 'text/plain,text/html,text/xml');
+   $header->header('Accept' => 'image/gif, image/x-xbitmap, image/jpeg, image/pjpeg, application/vnd.ms-excel, application/vnd.ms-powerpoint, application/msword, application/x-shockwave-flash, */*');
+   $header->header('Accept-Language' => 'en-au');   
+   $header->header('Host' => $host);
+   #$header->header('Proxy-Connection' => 'Keep-Alive'); #4oct
+   $header->header('Connection' => 'close');  #4oct
+ 
+   if ($this->{'agentName'})
+   {
+      $header->header('User-Agent' => $this->{'agentName'});
+   }
+
+   if ($this->{'referer'})
+   {      
+      $referer = $this->{'referer'};
+      
+      #3Oct04: escape the ? in the referer path before using it (otherwise push_header's regular expression crashes) 
+      $referer =~ s/\?/\?/gi;
+ 
+      $header->header('Referer' => $referer);
+   }
+   return $header;
+}
+
+# -------------------------------------------------------------------------------------------------
 # opens the connection to the URI 
 # 
 # Purpose:
@@ -251,31 +318,46 @@ sub get()
 {
    my $this = shift;
    my $absoluteURL = shift;
+   
    my $transactionNo = shift;
       
    my $userAgent;  # LWP::UserAgent
    my $request;    # HTTP::Request
    my $response;  # HTTP::Response
+   
    my $success = 1;    
    my $cookieJar = $this->{'cookieJarRef'};
                    
-   $userAgent = $this->{'userAgentRef'};  # get user agent for this instance     
-  
+                   
+   $userAgent = $this->{'userAgentRef'};  # get user agent for this instance
+
+   # 2 Oct 2004 - load cookies before every get/post (instead of the old auto-handling)
+   #print "   loading cookies logs/".$this->{'sessionName'}.".cookies...\n";
+   $cookieJar->load();
+   # set the cookie jar handler
+   $userAgent->cookie_jar($cookieJar);
+
+   $header = $this->prepareRequestHeader($absoluteURL);
+
+   
+   
    # prepare HTTP request...
-   $request = HTTP::Request->new(GET => $absoluteURL); 
-#   $this->_initialiseHeader($request);      
+   $request = HTTP::Request->new('GET', $absoluteURL, $header, undef);
+   
+   # set cookies in the header
+   $cookieJar->add_cookie_header($request);
+   $request->remove_header('Cookie2');   
+   
+   #print "---REQUEST\n";
+   #print $request->as_string();
+   #print "---\n";
    $this->{'requestRef'} = $request;      # update instance variable   
    $this->{'absoluteURL'} = $absoluteURL;  
-   
-   $this->_initialiseHeader($request);
-   
-   # 24 May 2004 - was missing call to prepare request to setup the header with
-   # standard parameters.   
-   $userAgent->prepare_request($request);
+       
    # issue the request...get a response
    $response = $userAgent->request($request);
    $this->{'responseRef'} = $response;    # update instance variable
-
+   
    if ($LOG_TRANSACTIONS)
    {
       $this->saveTransactionLog($transactionNo);
@@ -302,9 +384,9 @@ sub get()
       # failed to get the page
       $success = 0;
    }
-   
    return $success;
 }
+
 
 # -------------------------------------------------------------------------------------------------
 # opens the connection to the URI (posting form data with it) 
@@ -315,7 +397,7 @@ sub get()
 #
 # Parameters:
 #  STRING absoluteURL to get
-#  reference to hash of POST parameters
+#  STRING encodedcontent
 #  integer transaction number (optional, for logging)
 
 #
@@ -334,47 +416,46 @@ sub post()
 {
    my $this = shift;
    my $absoluteURL = shift;
-   my $parametersRef = shift;
+   my $content = shift;
    my $transactionNo = shift;
   
    my $userAgent;  # LWP::UserAgent
    my $request;    # HTTP::Request
    my $response;   # HTTP::Response
+   
    my $success = 1;       
    my $cookieJar = $this->{'cookieJarRef'};   
    my @postParameters;
                 
    $userAgent = $this->{'userAgentRef'};  # get user agent for this instance
    
-   $this->{'absoluteURL'} = $absoluteURL;   
+   # 2 Oct 2004 - load cookies before every get/post (instead of the old auto-handling)
+   #print "   loading cookies logs/".$this->{'sessionName'}.".cookies...\n";
+   $cookieJar->load();
+   # set the cookie jar handler
+   $userAgent->cookie_jar($cookieJar);
    
-   # parse the harsh into an array of post parameters
-   while(($key, $value) = each(%$parametersRef)) 
-   {
-      # place the key and value into the post array     
-     push @postParameters, $key;
-     push @postParameters, $value;
-   }
-        
+   $header = $this->prepareRequestHeader($absoluteURL);
+   $header->header('Content-Type' => 'application/x-www-form-urlencoded');
+   $header->header('Content-Length' => length $content);
+   $header->header('Pragma' => 'no-cache');
+
    # prepare HTTP request...
-   $request = POST $absoluteURL, \@postParameters;
+   $request = HTTP::Request->new('POST', $absoluteURL, $header, $content);
    
-   $noOfParameters = @postParameters;
-   if ($noOfParameters == 0)
-   {      
-      # if no parameters, then set the header value content-lenth = 0
-      $request->push_header('Content-Length' => '0');
-   }
+   # set cookies in the header
+   $cookieJar->add_cookie_header($request);
+   $request->remove_header('Cookie2');
+
+   #print "---REQUEST\n";
+   #print $request->as_string();
+   #print "---\n";
    
-   $this->_initialiseHeader($request);           
+     
+   $this->{'absoluteURL'} = $absoluteURL;              
    $this->{'requestRef'} = $request;      # update instance variable      
    
-   # 24 May 2004 - was missing call to prepare request to setup the header with
-   # standard parameters.   
-   $userAgent->prepare_request($request);
-   
-   #print "---[Request]---\n", $request->as_string(), "---[end]---\n";
-   
+ 
    # issue the request...get a response
    $response = $userAgent->request($request);
    $this->{'responseRef'} = $response;    # update instance variable

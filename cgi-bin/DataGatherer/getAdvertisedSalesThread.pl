@@ -20,7 +20,7 @@ print "Exited with value $exitValue\n";
 if ($exitValue > 0)
 {
    # continue the thread until complete
-   my $command = 'perl -I'.$library_path.' '.$library_path.'/GetAdvertisedSales.pl "continue='.$exitValue.'&'.$ARGV[0].'"';
+   my $command = 'perl -I'.$library_path.' '.$library_path.'/GetAdvertisedSales.pl "thread='.$exitValue.'&'.$ARGV[0].'"';
      
    $exitValue = 1;
    do{  

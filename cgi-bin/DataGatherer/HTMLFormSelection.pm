@@ -39,7 +39,10 @@ sub new
       name => $name,            
       optionListLength => 0,
       optionListRef => undef,   # list of hashes (value, text)
-      defaultIndex => -1     
+      defaultIndex => -1,
+      value => undef,
+      valueSet => 0,
+      defaultCleared => 0
    };      
    bless $htmlFormSelection;    # make it an object of this class   
    
@@ -216,3 +219,141 @@ sub getOptionListRef
            
    return $this->{'optionListRef'};      
 }
+
+# -------------------------------------------------------------------------------------------------
+# setValue
+#
+# Purpose:
+#  sets the current value for the selection
+#
+# Parameters:
+#  nil
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   true or false
+#
+sub setValue
+{
+   my $this = shift;
+      
+   my $value = shift;          
+#   print "HTMLFormSelection::setValue(", $this->{'name'}, ") = $value\n";           
+   $this->{'value'} = $value;  # should really be an index, but oh well....
+   $this->{'valueSet'} = 1;               
+}
+
+# -------------------------------------------------------------------------------------------------
+# getValue
+#
+# Purpose:
+#  returns the value of this selection
+#
+# Parameters:
+#  nil
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   nil
+#
+sub getValue
+{
+   my $this = shift;
+   my $value = undef;
+                  
+#       print "HTMLFormSelection::getValue(", $this->{'name'}, ")...\n";           
+              
+   if ($this->{'valueSet'})
+   {
+      $value = $this->{'value'};
+#      print "valueSet($value)\n";
+   }
+   else
+   {
+      # return the default
+      if ($this->hasDefault())
+      {
+         # if the default hasn't been cleared
+         if (!$this->{'defaultCleared'})
+         {
+            $value = $this->getDefaultValue();
+            #         print "default($value)\n";
+         }
+      }   
+   }      
+   
+   return $value;
+}
+
+# -------------------------------------------------------------------------------------------------
+
+# clearValue
+#
+# Purpose:
+#  clears the current value for the selection
+#
+# Parameters:
+#  nil
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   true or false
+#
+sub clearValue
+{
+   my $this = shift;
+                    
+   $this->{'valueSet'} = 0;
+   $this->{'defaultCleared'} = 1;  # clear the default value               
+}
+
+# -------------------------------------------------------------------------------------------------
+
+
+# -------------------------------------------------------------------------------------------------
+# isValueSet
+#
+# Purpose:
+#  returns 1 if the value has been set for this input or the default value is still valid
+#
+# Parameters:
+#  nil
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   nil
+#
+sub isValueSet
+{
+   my $this = shift;
+   my $result = 0;
+ 
+   if ($this->{'valueSet'})
+   {
+      $result = 1;
+   }
+   else
+   {
+      # check if a default value is set...
+      if ($this->hasDefault())
+      {
+         # check if the default is still valid
+         if (!$this->{'defaultCleared'})
+         {
+            # default hasn't been cleared - good
+            $result = 1;
+         }
+      }
+   }         
+
+   return $result;           
+}
+

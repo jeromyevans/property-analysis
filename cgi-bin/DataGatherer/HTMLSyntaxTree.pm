@@ -66,7 +66,21 @@
 #   outside the lastSearchConstraint and reject anchors after the firstSearchConstraint because
 #   it was checking the index of the tag start itself instead of the index of each text element
 #   inside the tag
-
+# 2 Oct 2004 - now sets the value attribute of checkboxs if defined.  Hadn't encountered this 
+#   beung used previously (ie. each checkbox has the same name but different value instead of 
+#   each checkbox having a different name) 
+# 4 Oct 2004 - The order of lists defined in a form is now tracked.  The list is used to
+#   maintain the order that the inputs are defined which is consistent with other clients 
+#   (don't appear to be mandatory but added while debugging to get exactly
+#   the same).  The list order is provided in a hidden element in the post hash if requested.
+#            - callback deletes text elements that start with <!-- - these should be rejected by the
+#   parser but some get through (always grouped together)
+# 5 Oct 2004 - added support for an HTMLFormSimpleInput that represents a basic name=value pair
+#   in a form (eg. a text input) - used instead of a hash to track whether the value is set or not
+#   This is not a trivial change - it impacted the parsing of the HTML tree (simple inputs, checkboxes and
+#   selections are kept completely separately in the way they're handled) which required a restructure
+#   of the code processing INPUTs.
+#
 # Description:
 #   Module that accepts an HTTP::Response and runs a parser (HTTP:TreeBuilder)
 # over it to generate a SyntaxTree object.  The SyntaxTree class is designed for 
@@ -335,7 +349,15 @@ sub _treeBuilder_callBack
                      {
                         $htmlForm->setMethod_POST();
                      }
-                  }  
+                     else
+                     {
+                        $htmlForm->setMethod_GET();
+                     }
+                  } 
+                  else
+                  {
+                     $htmlForm->setMethod_GET();
+                  }
                   
                   # add the HTML form to the end of the form list
                                                                                                                            
@@ -351,7 +373,7 @@ sub _treeBuilder_callBack
             if (($currentElement->tag() eq "input") && ($startFlag))
             {               
                if ($startFlag)
-               {           
+               {   
                   # check if the HTML form is defined            
                   if ($this->{'htmlFormListRef'})                  
                   {                 
@@ -359,64 +381,84 @@ sub _treeBuilder_callBack
                      $value = $currentElement->attr('value');
                      $name = $currentElement->attr('name');
                      
-                     # if the type is submit ignore it
+                     # if the type is only add it if it has a name...
                      if ($type =~ /SUBMIT/i)
                      {
-                        $name = undef;
-                     }
-                     # if the type is reset ignore it
-                     if ($type =~ /RESET/i)
-                     {
-                        $name = undef;
-                     }     
-                     
-                     # if the type is checkbox...
-                     if ($type =~ /CHECKBOX/i)
-                     {
-                        # --- 11July04 START ---
-                        $checkboxSelected = $currentElement->attr('selected');
-                      
-                        $textValue = "";
-
-                        # note: the 'textValue' is the next text element in the tree, but isn't necessary defined
-                        # fort he time being, it's ignored
-                        # 11 July 2004 - add the checkbox to the list of checkboxes for the form
-                        $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addCheckbox($name, $textValue, defined $checkboxSelected);
-                                               
-                        # --- 11July04 END ---
-                        
-                        # it it's not selected, don't add to the input value parameters
-                        if (!defined $currentElement->attr('selected'))
+                        # if both a value and name have been defined for the submit button, then add it as a simple input
+                        # with value set
+                        if (($value) && ($name))
                         {
-                           $name = undef;
+                           # only use if a value has been defined for the submit button
+                           $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addSimpleInput($name, $value, 1);
                         }
-                     }     
-                     
-                     # if the type is image...
-                     if ($type =~ /IMAGE/i)
-                     {
-                        # image needs special handling as the x and y offset of the
-                        # click position.  Set the offset to (1,1)
-                        # ensure the name is actually defined though
-                        if ($name)
+                        else
                         {
-                           $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->setInputValue($name.".x", '1');
-                           $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->setInputValue($name.".y", '1');
-                        }
-                        # clear name - don't need to use it anymore
-                        $name = undef;
+                           # if only the name is defined add it without the value set.  Otherwise it's ignored completely (not
+                           # used when submitting the form)
+                           if ($name)
+                           {
+                              $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addSimpleInput($name, undef, 0);
+                           }
+                        }                       
                      }
-                     
-                     # if the type is reset, then ignore it
-                     
-                     if ($name)
+                     else
                      {
-                        #print "input $name=$value\n";
-                        $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->setInputValue($name, $value);
+                        # if the type is reset ignore it (it's not submitted)
+                        if ($type =~ /RESET/i)
+                        {
+                           # ignored
+                        }
+                        else
+                        {
+                           # if the type is checkbox...
+                           if ($type =~ /CHECKBOX/i)
+                           {
+                              $checkboxSelected = $currentElement->attr('selected');
+                            
+                              $value = $currentElement->attr('value');
+      
+                              # note: the 'textValue' is the next text element in the tree, but isn't necessary defined
+                              # for the time being, it's ignored
+                              $textValue = "";
+                              
+                              # 11 July 2004 - add the checkbox to the list of checkboxes for the form
+                              $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addCheckbox($name, $value, $textValue, defined $checkboxSelected);
+                           }
+                           else
+                           {
+                              # if the type is image...
+                              if ($type =~ /IMAGE/i)
+                              {
+                                 # image needs special handling as the x and y offset of the
+                                 # click position.  Set the offset to (1,1)
+                                 # ensure the name is actually defined though
+                                 if ($name)
+                                 {
+                                    $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addSimpleInput($name.".x", '1', 1);
+                                    $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addSimpleInput($name.".y", '1', 1);
+                                 }
+                              }
+                              else
+                              {
+                                 # this is a simple input type - add it to the form if it has a name and/or value
+                                 if (($name) && ($value))
+                                 {
+                                    $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addSimpleInput($name, $value, 1);
+                                 }
+                                 else
+                                 {
+                                    if ($name)
+                                    {
+                                       $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addSimpleInput($name, undef, 0);
+                                    }
+                                 }
+                              }
+                           }
+                        }
                      }
                   }                                                                                                                       
                }              
-            }
+            } # -end of input tag-
             
             # if this is a form selection, add it to the form attached to the
             # syntax tree
@@ -427,7 +469,7 @@ sub _treeBuilder_callBack
                   # check if the HTML form is defined                                    
                   if ($this->{'htmlFormListRef'})                  
                   {                                                                                         
-                     $name = $currentElement->attr('name');                                                               
+                     $name = $currentElement->attr('name');
                      
                      if ($name)
                      {
@@ -568,27 +610,35 @@ sub _treeBuilder_callBack
       $testForNonBlanks =~ s/\s*//g;         
       if ($testForNonBlanks)
       {
-        # only add non-blank text elements to the text index
-        $textIndex = $this->{'textElementIndexLength'};
-        
-        # also add this element to the text element index
-        $this->{'textElementIndexRef'}[$this->{'textElementIndexLength'}] = $this->{'elementListLength'};           
-        
-        $this->{'textElementIndexLength'}++;
-
-        # if currently inside a tag, record this text element index against 
-        # the tag element
-        if ($this->{'_insideAnchor'})
-        {
-            
-           # also add this element to the anchor's text element list           
-           $textListLength = $this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}-1]{'textListLength'};
-           $this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}-1]{'textListRef'}[$textListLength] = $this->{'elementListLength'};
+         # special check for presense of a comment - ignore it if it starts with the comment pattern
+         if ($currentElement =~ /\<\!\-\-/)
+         {
+            $textIndex = 0;
+         }
+         else
+         {
+           # only add non-blank text elements to the text index
+           $textIndex = $this->{'textElementIndexLength'};
            
-           # and increase the length of the list of text elements associated with the anchor
-           $this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}-1]{'textListLength'}++;
-           #print "_insideAnchor: adding text '$currentElement' (anchor ", $this->{'anchorElementIndexLength'}-1, "listLen=",$this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}-1]{'textListLength'}, ")\n";
-        }
+           # also add this element to the text element index
+           $this->{'textElementIndexRef'}[$this->{'textElementIndexLength'}] = $this->{'elementListLength'};           
+           
+           $this->{'textElementIndexLength'}++;
+   
+           # if currently inside a tag, record this text element index against 
+           # the tag element
+           if ($this->{'_insideAnchor'})
+           {
+               
+              # also add this element to the anchor's text element list           
+              $textListLength = $this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}-1]{'textListLength'};
+              $this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}-1]{'textListRef'}[$textListLength] = $this->{'elementListLength'};
+              
+              # and increase the length of the list of text elements associated with the anchor
+              $this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}-1]{'textListLength'}++;
+              #print "_insideAnchor: adding text '$currentElement' (anchor ", $this->{'anchorElementIndexLength'}-1, "listLen=",$this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}-1]{'textListLength'}, ")\n";
+           }
+         }
       }
       else
       {
@@ -763,7 +813,8 @@ sub setSearchStartConstraintByText
          }         
       }      
    }
-   
+#   print "STARTBYTEXT: start = ", $this->{'searchStartIndex'}, " end = ", $this->{'searchEndIndex'}, "\n";
+
    return $found;
 }
 
@@ -842,7 +893,8 @@ sub setSearchEndConstraintByText
          }
       }
    }
-   
+#   print "ENDBYTEXT: start = ", $this->{'searchStartIndex'}, " end = ", $this->{'searchEndIndex'}, "\n";
+
    return $found;
 }
 
@@ -874,6 +926,7 @@ sub resetSearchConstraints
    
    $this->{'searchStartIndex'} = 0;
    $this->{'searchEndIndex'} = $this->{'elementListLength'}-1;
+ #  print "RESET: start = ", $this->{'searchStartIndex'}, " end = ", $this->{'searchEndIndex'}, "\n";
 }
 
 
@@ -965,6 +1018,7 @@ sub setSearchStartConstraintByTag
          }
       }      
    }
+#   print "STARTBYTAG: start = ", $this->{'searchStartIndex'}, " end = ", $this->{'searchEndIndex'}, "\n";
  
    return $found;      
 }
@@ -1059,6 +1113,7 @@ sub setSearchEndConstraintByTag
          }
       }
    }
+#   print "ENDBYTAG: start = ", $this->{'searchStartIndex'}, " end = ", $this->{'searchEndIndex'}, "\n";
  
    return $found;      
 }
@@ -2062,7 +2117,7 @@ sub getHTMLForm
    if ($this->{'htmlFormListLength'} > 0)
    {
       
-      if (!formName)
+      if (!$formName)
       {
          # if the form name isn't set get the first defined form         
          $found = 1;
