@@ -158,7 +158,7 @@ if (($parseSuccess) && ($parameters{'url'}))
    my $myDocumentReader = DocumentReader::new($agent, $instanceID, $parameters{'url'}, $sqlClient, 
       \%myTableObjects, \%myParsers, $printLogger);
 
-   #$myDocumentReader->setProxy("http://netcache.dsto.defence.gov.au:8080");
+#   $myDocumentReader->setProxy("http://localhost:8080");
    $myDocumentReader->run($createTables, $startSession, $continueSession, $dropTables);
  
 }
@@ -419,7 +419,7 @@ sub parseSearchDetails
    }
    else
    {
-      $printLogger->print("   parseSearchDetails: page identifier not found\n";
+      $printLogger->print("   parseSearchDetails: page identifier not found\n");
    }
    
    
@@ -747,7 +747,7 @@ sub parseSearchList
                if (!$advertisedSaleProfiles->checkIfTupleExists($SOURCE_NAME, $sourceID, undef, $priceLower, $priceHigher))                              
                {   
                   $printLogger->print("   parseSearchList: adding anchor id ", $sourceID, "...\n");
-                  $printLogger->print("   parseSearchList: url=", $sourceURL, "\n");                  
+                  #$printLogger->print("   parseSearchList: url=", $sourceURL, "\n");                  
                   push @urlList, $sourceURL;
                }
                else

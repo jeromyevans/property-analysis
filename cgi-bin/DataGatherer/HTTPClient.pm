@@ -84,7 +84,7 @@ sub new ($)
    # because many sites don't clear the discard flag but still expect the cookie
    # to be saved.  Perhaps this is just my misunderstanding (5 Apr 2004)
    #print "HTTPClient:creating cookie jar: ", $sessionName, ".cookies\n";
-   $cookieJar = HTTP::Cookies->new( file => $sessionName.".cookies", 
+   $cookieJar = HTTP::Cookies->new( file => "logs/".$sessionName.".cookies", 
                                     autosave => 1,
                                     ignore_discard => 1);
    #print "   loading cookies...\n";

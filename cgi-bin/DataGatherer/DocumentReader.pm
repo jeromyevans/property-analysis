@@ -596,7 +596,7 @@ sub _fetchDocument
    my $processResponse = 0;
                         
    if ($nextTransaction->methodIsGet())
-   {
+   {      
       $url = new URI::URL($nextTransaction->getURL(), $startURL)->abs();      
       $printLogger->print("GET: ", $url, "\n");     
       
@@ -615,7 +615,7 @@ sub _fetchDocument
       # count the number of transactions performed this instance (this is used in the HTTP log)
       $this->{'transactionNo'}++;
       
-      print "HTTP (GET) Response Code: ", $httpClient->responseCode(), "\n";
+      $printLogger->print("HTTP (GET) Response Code: ", $httpClient->responseCode(), "\n");
    }
    else
    {
@@ -640,7 +640,7 @@ sub _fetchDocument
          # count the number of transactions performed this instance (this is used in the HTTP log)
          $this->{'transactionNo'}++;
       
-         print "HTTP (POST) Response Code: ", $httpClient->responseCode(), "\n";
+         $printLogger->print("HTTP (POST) Response Code: ", $httpClient->responseCode(), "\n");
       }
    }
    
@@ -718,10 +718,9 @@ sub _parseDocument
       {
 	      $absoluteURL = new URI::URL($_, $url)->abs();   
          # create new transaction.  set referer to the base url 
+         $httpTransaction = HTTPTransaction::new($absoluteURL, 'GET', undef, $absoluteURL);
          
-         $httpTransaction = HTTPTransaction::new($absoluteURL, 'GET', undef, $url);
-         
-         $frameHTTPClient = HTTPClient::new($this->{'sessionName'});      
+         $frameHTTPClient = HTTPClient::new($this->{'instanceID'});      
          $frameHTTPClient->setProxy($this->{'proxy'});                  
          $frameHTTPClient->setUserAgent($DEFAULT_USER_AGENT);
 
@@ -757,7 +756,7 @@ sub _parseDocument
       
       if (($parserIndex = stringContainsPattern($url, \@parserPatternList)) >= 0)
    	{
-	      #print "calling callback #$parserIndex...\n";
+	     # print "calling callback #$parserIndex...\n";
 	         
 	   	# get the value from the hash with the pattern matching the callback function
 		   # the value in the cash is a code reference (to the callback function)		            
@@ -851,7 +850,7 @@ sub run
    }
 
    # 25 July 2004 - start a new session in if continue is selected but a session doesn't exist
-   if (($startSession) || ($continueSession))
+   if ($continueSession)
    {
       @sessionURLstack = $this->_loadSessionURLStack();
 
