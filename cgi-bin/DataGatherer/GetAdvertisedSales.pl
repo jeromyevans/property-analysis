@@ -26,7 +26,6 @@ use HTTPClient;
 use HTMLSyntaxTree;
 use SQLClient;
 use SuburbProfiles;
-use LogTable;
 #use URI::URL;
 use DebugTools;
 use DocumentReader;
@@ -362,7 +361,6 @@ sub parseSearchDetails
    my $tablesRef = $documentReader->getTableObjects();
    
    my $advertisedSaleProfiles = $$tablesRef{'advertisedSaleProfiles'};
-   my $logtable = $$tablesRef{'logTable'};
    
    my %saleProfiles;
    my $checksum;   

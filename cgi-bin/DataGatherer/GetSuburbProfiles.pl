@@ -3,10 +3,6 @@
 # Parses the detailed suburb information to extract fields
 #  29 March 2004 - converted to use DocumentReader
 #
-# Needs to set:
-#   referer to last URL
-#   agent to mozilla
-
 # 16 May 04 - bugfix wasn't using parameters{'url'} as start URL
 #
 # ---CVS---
@@ -72,9 +68,7 @@ sub loadConfiguration
 
 # -------------------------------------------------------------------------------------------------    
  
-#my $startURL = "http://localhost/trial/content-home.htm";
-#my $startURL = "http://www.reiwa.com.au/content-home.cfm";
-
+my $SOURCE_NAME = "REIWA";
 my $useText = 0;
 $createTables = 0;
 $getSuburbProfiles = 0;
@@ -97,7 +91,7 @@ if (!$agent)
 
 my $printLogger = PrintLogger::new($agent, $agent.".stdout", 1, $useText, $useHTML);
 
-$printLogger->printHeader("Suburb Profiles\n");
+$printLogger->printHeader("$agent\n");
 
 # load the configuration file
 my %parameters = loadConfiguration($agent.".config", $printLogger);
@@ -109,11 +103,10 @@ if (!$parameters{'url'})
 
 if (($parseSuccess) && ($parameters{'url'}))
 {            
-   ($sqlClient, $suburbProfiles, $logTable) = initialiseTableObjects();
+   ($sqlClient, $suburbProfiles) = initialiseTableObjects();
    # hash of table objects - the key's are only significant to the local callback functions
  
-   $myTableObjects{'suburbProfiles'} = $suburbProfiles;
-   $myTableObjects{'logTable'} = $logTable;     
+   $myTableObjects{'suburbProfiles'} = $suburbProfiles;     
    
    $myParsers{"content-home"} = \&parseHomePage;
    $myParsers{"content-suburb.cfm"} = \&parseSuburbLetters;
@@ -131,7 +124,7 @@ else
    $printLogger->print("   main: No action requested\n");
 }
 
-$printLogger->printFooter("Finished");
+$printLogger->printFooter("Finished\n");
 
 # -------------------------------------------------------------------------------------------------
 # parseSuburbLetters
@@ -347,8 +340,7 @@ sub parseSuburbProfilePage
    my $sqlClient = $documentReader->getSQLClient();
    my $tablesRef = $documentReader->getTableObjects();
    
-   my $suburbProfiles = $$tablesRef{'suburbProfiles'};
-   my $logtable = $$tablesRef{'logTable'};
+   my $suburbProfiles = $$tablesRef{'suburbProfiles'};   
    
    my %suburbProfile;
    my $checksum;   
@@ -370,22 +362,18 @@ sub parseSuburbProfilePage
       if ($sqlClient->connect())
       {                          
          # check if the log already contains this checksum - if it does, assume the tuple already exists                  
-         if ($logTable->checkIfTupleExists($url, $checksum))
+         if ($suburbProfiles->checkIfTupleExists($SOURCE_NAME, $suburbProfile{'suburbName'}, $checksum))
          {
             # this tuple has been previously extracted - it can be dropped
             # record in the log that it was encountered again
-            $logTable->addEncounterRecord($url, $checksum);
-            $printLogger->print("   existing record encountered\n");
+            $printLogger->print("   parseSuburbProfile: identical record already encountered at $SOURCE_NAME.\n");
+	         $suburbProfiles->addEncounterRecord($SOURCE_NAME, $suburbProfile{'suburbName'}, $checksum);            
          }
          else
          {
+            $printLogger->print("   parseSuburbProfile: unique checksum/url - adding new record.\n");
             # this tuple has never been extracted before - add it to the database
-            if ($suburbProfiles->addRecord(\%suburbProfile))
-            {
-               # successfully added the tuple - log the checksum
-               $logTable->addRecord($url, undef, $checksum);
-               $printLogger->print("   new record added\n");
-            }
+            $suburbProfiles->addRecord($SOURCE_NAME, \%suburbProfile, $url, $checksum)            
          }
       }
       else
@@ -478,15 +466,14 @@ sub parseHomePage
 #  Nil
 #
 # Returns:
-#  ($logTable, $
+#  ($sqlClient, $suburbProfiles)
 #    
 sub initialiseTableObjects
 {
    my $sqlClient = SQLClient::new(); 
    my $suburbProfiles = SuburbProfiles::new($sqlClient);
-   my $logTable = LogTable::new($sqlClient, "GetSuburbProfilesLog");
  
-   return ($sqlClient, $suburbProfiles, $logTable);
+   return ($sqlClient, $suburbProfiles);
 }
 
 # -------------------------------------------------------------------------------------------------

@@ -95,7 +95,7 @@ my $SQL_CREATE_TABLE_STATEMENT = "CREATE TABLE IF NOT EXISTS AdvertisedSaleProfi
     "LastEncountered DATETIME, ".
     "SourceName TEXT, ".
     "SourceURL TEXT, ".
-    "SourceID VARCHAR(20), "
+    "SourceID VARCHAR(20), ".
     "Checksum INTEGER, ".
     "Identifier INTEGER ZEROFILL PRIMARY KEY AUTO_INCREMENT, ".    
     "SuburbIdentifier INTEGER, ".
@@ -385,7 +385,7 @@ sub checkIfTupleExists
          foreach (@checksumList)
          {        
             # $_ is a reference to a hash
-            if (($$_{'checksum'} == $checksum) && ($$_{'source'} == $sourceName) && ($$_{'sourceID'} == $sourceID))            
+            if (($$_{'checksum'} == $checksum) && ($$_{'sourceName'} == $sourceName) && ($$_{'sourceID'} == $sourceID))            
             {
                # found a match
                $found = 1;

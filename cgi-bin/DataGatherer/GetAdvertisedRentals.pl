@@ -19,7 +19,6 @@ use HTTPClient;
 use HTMLSyntaxTree;
 use SQLClient;
 use SuburbProfiles;
-use LogTable;
 #use URI::URL;
 use DebugTools;
 use DocumentReader;
@@ -334,7 +333,6 @@ sub parseSearchDetails
    my $tablesRef = $documentReader->getTableObjects();
    
    my $advertisedRentalProfiles = $$tablesRef{'advertisedRentalProfiles'};
-   my $logtable = $$tablesRef{'logTable'};
    
    my %rentalProfiles;
    my $checksum;   
@@ -783,9 +781,8 @@ sub initialiseTableObjects
 {
    my $sqlClient = SQLClient::new(); 
    my $advertisedRentalProfiles = AdvertisedRentalProfiles::new($sqlClient);
-   my $logTable = LogTable::new($sqlClient, "AdvertisedRentalProfilesLog");
  
-   return ($sqlClient, $advertisedRentalProfiles, $logTable);
+   return ($sqlClient, $advertisedRentalProfiles);
 }
 
 # -------------------------------------------------------------------------------------------------

@@ -79,6 +79,7 @@ sub new
 # Returns:
 #   TRUE (1) if successful, 0 otherwise
 #
+
 my $SQL_CREATE_TABLE_STATEMENT = "CREATE TABLE IF NOT EXISTS AdvertisedRentalProfiles ".
    "(DateEntered DATETIME NOT NULL, ".
     "LastEncountered DATETIME, ".
@@ -368,7 +369,7 @@ sub checkIfTupleExists
          foreach (@checksumList)
          {        
             # $_ is a reference to a hash
-            if (($$_{'checksum'} == $checksum) && ($$_{'source'} == $sourceName) && ($$_{'sourceID'} == $sourceID))            
+            if (($$_{'checksum'} == $checksum) && ($$_{'sourceName'} == $sourceName) && ($$_{'sourceID'} == $sourceID))            
             {
                # found a match
                $found = 1;
