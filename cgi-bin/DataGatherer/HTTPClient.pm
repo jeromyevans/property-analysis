@@ -17,7 +17,9 @@
 #
 # History:
 #  25 July 2004 - added support for optional transactionNo stored in the log file
-#
+#  27 Sept 2004 - removed the autosave features for the cookies file.  This was deleting some cookies that I needed
+#   to stay persistent between sessions even though discard was set (to allow a session to continue over multiple instances
+#   of the application running)
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -78,16 +80,15 @@ sub new ($)
    $userAgent->timeout(30);   # set 30 second timeout (instead of 3 mins)
    
    # create an object for automatically handling cookies for this
-   # user agent.  Note cookies are written to the file sessionName.cookies
-   # automatiicaly in this version.
+   # user agent.  
    # NOTE: ignore_discard needs to be set to true (in my experience so far)
    # because many sites don't clear the discard flag but still expect the cookie
    # to be saved.  Perhaps this is just my misunderstanding (5 Apr 2004)
    #print "HTTPClient:creating cookie jar: ", $sessionName, ".cookies\n";
    $cookieJar = HTTP::Cookies->new( file => "logs/".$sessionName.".cookies", 
-                                    autosave => 1,
+                                    autosave => 0,
                                     ignore_discard => 1);
-   #print "   loading cookies...\n";
+   print "   loading cookies logs/".$sessionName.".cookies...\n";
    $cookieJar->load();
    #print $cookieJar->as_string();
    # set the cookie jar handler
@@ -392,7 +393,7 @@ sub post()
    #print "   saving cookies...\n";   
    #print $cookieJar->as_string();
    $cookieJar->save();
-      
+   
    # push the retreived response onto the response stack
    my $responseStackRef = $this->{'responseStackRef'};   
    push @$responseStackRef, ($response);

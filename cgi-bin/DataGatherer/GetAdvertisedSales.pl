@@ -15,7 +15,9 @@
 #   empty responses from the server that yielded an empty database entry.
 #  21 August 2004 - changed parseSearchForm to set the main area to all of the state instead of just perth metropolitan.
 #  21 August 2004 - added requirement to specify state as a parameter - used for postcode lookup
-#
+#  28 September 2004 - use the continue command to specify a threadID to continue from - this allows the URL stack and cookies
+#   from a previous instance to be reused in the same 'thread'.  Implemented to support automatic restart of a thread in a loop and
+#   automatic exit if an instance runs out of memory.  (exit, then restart from same point) 
 # To do:
 #  - front page for monitoring progress
 #
@@ -164,7 +166,7 @@ if (($parseSuccess) && ($parameters{'url'}) && ($state) && (!$maintenance))
    $myParsers{"CGIPostTest"} = \&parseDisplayResponse;   
 
    my $myDocumentReader = DocumentReader::new($agent, $instanceID, $parameters{'url'}, $sqlClient, 
-      \%myTableObjects, \%myParsers, $printLogger);
+      \%myTableObjects, \%myParsers, $printLogger, $continueSession);
 
    #$myDocumentReader->setProxy("http://localhost:8080");
    $myDocumentReader->run($createTables, $startSession, $continueSession, $dropTables);

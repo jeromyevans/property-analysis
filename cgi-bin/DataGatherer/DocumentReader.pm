@@ -34,6 +34,15 @@
 #   by the document reader in this instance.  The transaction number is now stored in the database and HTTP log file
 #               1 Aug 2004 - fixed bug where multiple instances running concurrently would read and write to the same
 #   session file, making them get mixed up and lose track if reading out of order.
+#              26 Sep 2004 - added code to detect if the parser is running unusually slow, typically an artefact of 
+#   running out of memory.  If this occurs, the transaction stack is saved.  The application then exits with exitcode 1.  
+#   This allows the program to be executed in a loop that restarts it if memory isn't being flushed.  Admittedly  a bit 
+#   of a hack, but needed to overcome current problem  handling very large number of transactions.  
+#                           - When the program starts in continue mode it loads the name of the last instance and copies
+#   the old cookie file into the new session's cookie file so the old cookies are loaded.  New ThreadID is used to indicate
+#   which instance to continue
+#              28 Sep 2004 - Include ThreadID as a parameter - used to continue an earlier session's sessionlog and cookies
+#   in a new instance.  Allows multiple instances to run concurrently provided they don't use the same threadID.
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -51,6 +60,7 @@ use URI::URL;
 use DebugTools;
 use HTTPTransaction;
 use PrintLogger;
+use File::Copy;
 
 my $DEFAULT_USER_AGENT ="Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)";
 
@@ -80,7 +90,7 @@ my ($printLogger) = undef;
 # Returns:
 #  DocumentReader object
 #    
-sub new ($ $ $ $ $ $ $)
+sub new ($ $ $ $ $ $ $ $)
 {
    my $sessionName = shift;
    my $instanceID = shift;
@@ -89,6 +99,7 @@ sub new ($ $ $ $ $ $ $)
    my $tablesHashRef = shift;   
    my $parserHashRef = shift;     
    my $localPrintLogger = shift;
+   my $threadID = shift;
    
    $printLogger = $localPrintLogger; 
    
@@ -100,7 +111,9 @@ sub new ($ $ $ $ $ $ $)
       parserHashRef => $parserHashRef,    
       proxy => undef,
       instanceID => $instanceID,
-      transactionNo => 0
+      transactionNo => 0,
+      lowMemoryError => 0,
+      threadID => $threadID
    };               
    
    bless $documentReader;     
@@ -392,7 +405,7 @@ sub _dropTables
 #  multi-session processing
 #
 # Parameters:
-#  nil
+#  (optional) boolean useLast - set to use the last session file
 #
 # Constraints:
 #  nil
@@ -406,10 +419,17 @@ sub _dropTables
 sub _loadSessionURLStack
 {
    my $this = shift;
+   my $useLast = shift;
    my @sessionURLstack;
    my $sessionFileName = $this->{'instanceID'}.".session";
    my $index = 0;
    my $httpTransaction;
+   
+   if ($useLast)
+   {
+      # 26 Sept 04 - if requested, load last used session file to continue from that one
+      $this->recoverLastSession();
+   }
    
    if (-e $sessionFileName)
    {       
@@ -758,12 +778,23 @@ sub _parseDocument
       if (($parserIndex = stringContainsPattern($url, \@parserPatternList)) >= 0)
    	{
 	     # print "calling callback #$parserIndex...\n";
-	         
+	      # 26 September 2004 - measure how long the callback takes to run  
+         $startTime = time;
+         
 	   	# get the value from the hash with the pattern matching the callback function
 		   # the value in the cash is a code reference (to the callback function)		            
 		   my $callbackFunction = $$parserHashRef{$parserPatternList[$parserIndex]};		  		  
          my @callbackTransactionStack = &$callbackFunction($this, $htmlSyntaxTree, $url, $this->{'instanceID'}, $this->{'transactionNo'});
-		  
+		
+         $endTime = time;
+         $runningTime = $endTime - $startTime;
+         #print "Transaction $transactionNo took $runningTime seconds\n";
+         if ($runningTime > 20)
+         {
+            $printLogger->print("Getting very slow...low memory....halting this instance (should automatically restart)\n");
+            $this->{'lowMemoryError'} = 1;
+         }
+            
          # loop through the transactions in reverse so when they're pushed onto 
          # the stack the order is maintained for popping.
          foreach (reverse @callbackTransactionStack)
@@ -841,6 +872,8 @@ sub run
    my $parserIndex;
    
    my $httpTransaction;
+   my $recoveryCookies = undef;
+   my $useRecoveryCookies = 0;
    
     # get the list of pattterns for which a parser has been defined      
    my @parserPatternList = keys %$parserHashRef; 
@@ -853,19 +886,27 @@ sub run
    # 25 July 2004 - start a new session in if continue is selected but a session doesn't exist
    if ($continueSession)
    {
-      @sessionURLstack = $this->_loadSessionURLStack();
-
-      $stackSize = @sessionURLstack;
-      if (($stackSize == 0) && ($continueSession))
+      if (defined $this->{'threadID'})
       {
-         # there's no session to continue - start a new session
-         $startSession = 1;
+         # the threadID has been specified - continue that thread
+         # 26 Sept 04 - attempt to load the last session file and last cookie file for this session
+         @sessionURLstack = $this->_loadSessionURLStack(1);
+         $this->recoverCookies();
+         
+         $stackSize = @sessionURLstack;
+         if (($stackSize == 0) && ($continueSession))
+         {
+            # there's no session to continue - start a new session
+            $startSession = 1;
+         }
       }
    }
    
    if ($startSession)
    {
-      $printLogger->print("--- starting new session ---\n");
+      # 27 Sept 04 - initialise a new threadID - used for continuing multi-part session
+      $this->{'threadID'} = int(rand 128)+1;
+      $printLogger->print("--- starting new session - threadID=",$this->{'threadID'}, " ---\n");
    
       $httpClient = HTTPClient::new($this->{'instanceID'});      
       $httpClient->setProxy($this->{'proxy'});
@@ -892,17 +933,20 @@ sub run
    
    if ($continueSession)
    {   
-      $printLogger->print("--- continuing session ---\n");
+      $printLogger->print("--- continuing session - threadID=", $this->{'threadID'}, " ---\n");
       # get the URL stack remaining for the session
       @sessionURLstack = $this->_loadSessionURLStack();
-
-      $httpClient = HTTPClient::new($this->{'instanceID'});         
+      
+      $httpClient = HTTPClient::new($this->{'instanceID'});
+            
       $httpClient->setProxy($this->{'proxy'});
       $httpClient->setUserAgent($DEFAULT_USER_AGENT);
-      $maxURLsPerSession = 0;
+      $maxURLsPerSession = 2;
       $currentIndex = 0;
       $urlValid = 1;
-            
+      # 26 Sept 2004 - save the name of the current instance files, used for automatic recovery
+      $this->saveRecoverySessionName();
+
       while ((($currentIndex < $maxURLsPerSession) || ($maxURLsPerSession == 0)) && ($urlValid))
       {  
          $nextTransaction = pop @sessionURLstack;   
@@ -921,24 +965,48 @@ sub run
                
                # save the status of the session in case it needs to be continued later
                $this->_saveSessionURLStack(\@sessionURLstack);
+                  
+               # 26 Sept 2004 - If parser took too long, drop out (use for automatic restart after memory flush)
+               if ($this->{'lowMemoryError'})
+               {
+                  # exit and return the thread ID for restart
+                  $printLogger->print("end-of-session - exiting with threadID".$this->{'threadID'}."\n");
+                  exit $this->{'threadID'};
+               }
                
 	            $httpClient->back();
             }            
          } 
          else
          {
-	         # this URL wasn't defined - could be at end of session
-            
+	         # this URL wasn't defined - could be at end of session            
 	         $urlValid = 0;
-	         $printLogger->print("end-of-session\n");            
+            $this->_saveSessionURLStack(\@sessionURLstack);
+
+	         $printLogger->print("end-of-session - exiting with threadID".$this->{'threadID'}."\n");
+            # exit and return the thread ID for restart
+            exit $this->{'threadID'};            
          }	       
 
          $currentIndex++;
       }      
+      
+      if (($currentIndex == $maxURLsPerSession) && ($maxURLsPerSession > 0))
+      {
+         # 27 Sep 04
+         # if the session exits early because of the limit on number of transactions, then exit
+         # with an exit code indicating the threadID.
+         $this->_saveSessionURLStack(\@sessionURLstack);
+
+         $printLogger->print("end-of-session - exiting with threadID".$this->{'threadID'}."\n");
+         # exit and return the thread ID for restart
+         exit $this->{'threadID'};  
+      }
    
-      # save the status of the session in case it needs to be continued later
       $this->_saveSessionURLStack(\@sessionURLstack);
       
+      # release this threadID - can't be continued as it's finished
+      $this->endRecoveryThread();
       $printLogger->print("DocumentReader finished\n");
    }
 
@@ -996,3 +1064,242 @@ sub getTableObjects
 }
 
 # -------------------------------------------------------------------------------------------------
+
+
+
+# -------------------------------------------------------------------------------------------------
+# saveRecoverySessionName
+#  saves to disk the name of the file containing the name of this session and threadID - used for automatic restart from this position
+# file is saved in the form"
+#   theadID=instanceID\n
+#
+# Purpose:
+#  Debugging
+#
+# Parametrs:
+#  nil
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  $this->{'requestRef'} 
+#  $this->{'responseRef'}
+#
+# Returns:
+#   nil
+#
+sub saveRecoverySessionName
+
+{
+   my $this = shift;
+   my $recoveryPointFileName = "RecoverySessionName.last";
+   my %threadList;
+   
+   # load the cookie file name from the recovery file
+   open(SESSION_FILE, "<$recoveryPointFileName") || print "Can't open recovery point file: $!\n"; 
+  
+   $index = 0;
+   # loop through the content of the file
+   while (<SESSION_FILE>) # read a line into $_
+   {
+      # remove end of line marker from $_
+      chomp;
+      # split on null character
+      ($threadID, $sessionName) = split /=/;
+    
+      $threadList{$threadID} = $sessionName;
+
+      $index++;                    
+   }
+   
+   close(SESSION_FILE);     
+   
+   
+   # add this instanceID to the list of thread session names
+   $threadList{$this->{'threadID'}} = $this->{'instanceID'};
+   
+   # save the new file with the thread added  
+   open(SESSION_FILE, ">$recoveryPointFileName") || print "Can't open file: $!"; 
+   
+   # loop through all of the elements (in reverse so they can be read into a stack)
+   foreach (keys %threadList)      
+   {        
+      print SESSION_FILE $_."=".$threadList{$_}."\n";        
+   }
+   
+   close(SESSION_FILE);          
+}
+
+# -------------------------------------------------------------------------------------------------
+# endRecoveryThread
+#  remove theadID from the recovery file as the thread is now complete
+# file is saved in the form:
+#   theadID=instanceID\n
+#
+# Purpose:
+#  Debugging
+#
+# Parametrs:
+#  nil
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  $this->{'requestRef'} 
+#  $this->{'responseRef'}
+#
+# Returns:
+#   nil
+#
+sub endRecoveryThread
+
+{
+   my $this = shift;
+   my $recoveryPointFileName = "RecoverySessionName.last";
+   my %threadList;
+   
+   # load the cookie file name from the recovery file
+   open(SESSION_FILE, "<$recoveryPointFileName") || print "Can't open recovery point file: $!\n"; 
+  
+   $index = 0;
+   # loop through the content of the file
+   while (<SESSION_FILE>) # read a line into $_
+   {
+      # remove end of line marker from $_
+      chomp;
+      # split on null character
+      ($threadID, $sessionName) = split /=/;
+    
+      $threadList{$threadID} = $sessionName;
+
+      $index++;                    
+   }
+   
+   close(SESSION_FILE);     
+   
+   # remove this threadID
+   delete $threadList{$this->{'threadID'}};
+   
+   # save the new file with the thread removed  
+   open(SESSION_FILE, ">$recoveryPointFileName") || print "Can't open file: $!"; 
+   
+   # loop through all of the elements (in reverse so they can be read into a stack)
+   foreach (keys %threadList)      
+   {        
+      print SESSION_FILE $_."=".$threadList{$_}."\n";        
+   }
+   
+   close(SESSION_FILE);          
+}
+
+# -------------------------------------------------------------------------------------------------
+
+# reads the name of the session corresponding to this thread from the recovery file
+sub recoverThreadSessionName
+
+{
+   my $this = shift;
+   my $recoveryPointFileName = "RecoverySessionName.last";
+   my %threadList;
+   
+   # load the cookie file name from the recovery file
+   open(SESSION_FILE, "<$recoveryPointFileName") || print "Can't open recovery point file: $!\n"; 
+  
+   $index = 0;
+   # loop through the content of the file
+   while (<SESSION_FILE>) # read a line into $_
+   {
+      # remove end of line marker from $_
+      chomp;
+      # split on null character
+      ($threadID, $sessionName) = split /=/;
+    
+      $threadList{$threadID} = $sessionName;
+
+      $index++;                    
+   }
+   
+   close(SESSION_FILE);     
+   
+   return $threadList{$this->{'threadID'}};
+} 
+
+# -------------------------------------------------------------------------------------------------
+# recoverCookies
+#  recovers cookies from disk by coping the recoverycookies into the new cookie file name - used for automatic restart from this position
+# 
+# Purpose:
+#  Debugging
+#
+# Parametrs:
+# nil
+
+# Constraints:
+#  nil
+#
+# Updates:
+#  $this->{'requestRef'} 
+#  $this->{'responseRef'}
+#
+# Returns:
+#   nil
+#
+sub recoverCookies
+
+{
+   my $this = shift;
+   
+   my $instanceID = $this->{'instanceID'};
+   
+   $sessionName = $this->recoverThreadSessionName();
+   if ($sessionName)
+   {
+      print "Using cookie file logs/".$sessionName.".cookies\n";
+      # copy the old file in place of the new one
+      if (!copy("logs/".$sessionName.".cookies", "logs/".$instanceID.".cookies"))
+      {
+         print "Failed to duplicate previous cookie file\n";
+      }
+   }      
+}
+
+# -------------------------------------------------------------------------------------------------
+# recoverLastSession
+#  recovers last session file from from disk by coping the sessionfile into the new session file name - used for automatic restart from this position
+# 
+# Purpose:
+#  Debugging
+#
+# Parametrs:
+# nil
+
+# Constraints:
+#  nil
+#
+# Updates:
+#  $this->{'requestRef'} 
+#  $this->{'responseRef'}
+#
+# Returns:
+#   nil
+#
+sub recoverLastSession
+
+{
+   my $this = shift;
+   my $recoveryPointFileName = "RecoverySessionName.last";
+   my $instanceID = $this->{'instanceID'};
+   
+   $sessionName = $this->recoverThreadSessionName();
+   
+   if ($sessionName)
+   {
+      # copy the old file in place of the new one
+      copy($sessionName.".session", $instanceID.".session");
+   }      
+}
+
+# -------------------------------------------------------------------------------------------------
+
