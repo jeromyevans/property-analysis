@@ -133,6 +133,36 @@ sub parseNumber
 }
 
 # -------------------------------------------------------------------------------------------------
+# strictNumber
+# removes non-numeric characters (except .) from the string
+
+# Purpose:
+#  parsing document text
+#
+# Parameters:
+#  string to modify
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  Nil
+#
+# Returns:
+#   string with non-numeric characters removed
+#
+sub strictNumber
+{
+   my $this = shift;
+   
+   my $stringToParse = shift;
+
+   $stringToParse =~ s/[^0-9.]//gi;
+  
+   return $stringToParse;
+}
+
+# -------------------------------------------------------------------------------------------------
 
 # removes leading and trailing whitespace from parameter
 # parameters:

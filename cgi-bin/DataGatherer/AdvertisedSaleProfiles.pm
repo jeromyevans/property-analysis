@@ -339,7 +339,9 @@ sub countEntries
 #  string source
 #  string sourceID
 #  string checksum (ignored if undef)
-#
+#  integer priceLower (ignored if undef)
+#  integer priceUpper (not used)
+
 # Constraints:
 #  nil
 #
@@ -354,6 +356,8 @@ sub checkIfTupleExists
    my $sourceName = shift;      
    my $sourceID = shift;
    my $checksum = shift;
+   my $advertisedPriceLower = shift;
+   my $advertisedPriceUpper = shift;
    my $statement;
    my $found = 0;
    my $statementText;
@@ -367,12 +371,26 @@ sub checkIfTupleExists
       $quotedSourceID = $sqlClient->quote($sourceID);
       $quotedUrl = $sqlClient->quote($url);
       if (defined $checksum)
-      {      
-         $statementText = "SELECT sourceName, sourceID, checksum FROM $tableName WHERE sourceName = $quotedSource and sourceID = $quotedSourceID and checksum = $checksum";
+      {
+         if ($advertisedPriceLower)
+         {
+            $statementText = "SELECT sourceName, sourceID, checksum, advertisedPriceLower FROM $tableName WHERE sourceName = $quotedSource and sourceID = $quotedSourceID and checksum = $checksum and advertisedPriceLower = $advertisedPriceLower";
+         }
+         else
+         {
+            $statementText = "SELECT sourceName, sourceID, checksum FROM $tableName WHERE sourceName = $quotedSource and sourceID = $quotedSourceID and checksum = $checksum";
+         }
       }
       else
       {
-         $statementText = "SELECT sourceName, sourceID FROM $tableName WHERE sourceName = $quotedSource and sourceID = $quotedSourceID";
+         if ($advertisedPriceLower)
+         {
+            $statementText = "SELECT sourceName, sourceID, advertisedPriceLower FROM $tableName WHERE sourceName = $quotedSource and sourceID = $quotedSourceID and advertisedPriceLower = $advertisedPriceLower";
+         }
+         else
+         {
+            $statementText = "SELECT sourceName, sourceID FROM $tableName WHERE sourceName = $quotedSource and sourceID = $quotedSourceID";
+         }
       }      
             
       $statement = $sqlClient->prepareStatement($statementText);
@@ -383,13 +401,27 @@ sub checkIfTupleExists
          @checksumList = $sqlClient->fetchResults();
                            
          foreach (@checksumList)
-         {        
-            # $_ is a reference to a hash
-            if (($$_{'checksum'} == $checksum) && ($$_{'sourceName'} == $sourceName) && ($$_{'sourceID'} == $sourceID))            
+         {
+            # only check advertisedpricelower if it's undef (if caller hasn't set it because info wasn't available then don't check that field.           
+            if ($advertisedPriceLower)
             {
-               # found a match
-               $found = 1;
-               last;
+               # $_ is a reference to a hash
+               if (($$_{'checksum'} == $checksum) && ($$_{'sourceName'} == $sourceName) && ($$_{'sourceID'} == $sourceID) && ($$_{'advertisedPriceLower'} = $advertisedPriceLower))            
+               {
+                  # found a match
+                  $found = 1;
+                  last;
+               }
+            }
+            else
+            {
+               # $_ is a reference to a hash
+               if (($$_{'checksum'} == $checksum) && ($$_{'sourceName'} == $sourceName) && ($$_{'sourceID'} == $sourceID))            
+               {
+                  # found a match
+                  $found = 1;
+                  last;
+               }
             }
          }                 
       }                    

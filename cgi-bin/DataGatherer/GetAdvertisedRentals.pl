@@ -353,7 +353,7 @@ sub parseSearchDetails
    if ($sqlClient->connect())
    {		 	 
       # check if the log already contains this checksum - if it does, assume the tuple already exists                  
-      if ($advertisedRentalProfiles->checkIfTupleExists($SOURCE_NAME, $rentalProfiles{'SourceID'}, $checksum))
+      if ($advertisedRentalProfiles->checkIfTupleExists($SOURCE_NAME, $rentalProfiles{'SourceID'}, $checksum, $rentalProfiles{'AdvertisedWeeklyRent'}))
 	   {
          # this tuple has been previously extracted - it can be dropped
          # record in the log that it was encountered again
@@ -642,7 +642,8 @@ sub parseSearchList
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
    my $url = shift;    
-   my @urlList;        
+   my @urlList;
+   my $firstRun = 1;        
    
    # --- now extract the property information for this page ---
    $printLogger->print("inParseSearchList:\n");
@@ -653,23 +654,40 @@ sub parseSearchList
       if ($housesListRef = $htmlSyntaxTree->getAnchorsAndTextContainingPattern("\#"))
       {  
          # loop through all the entries in the log cache
-         $printLogger->print("   parseSearchList: checking unqiue ID exists...\n");
+         $printLogger->print("   parseSearchList: checking if unique ID exists...\n");
          if ($sqlClient->connect())
          {
             foreach (@$housesListRef)
-            {
+            {               
+               $sourceID = $$_{'string'};
+               $sourceURL = $$_{'href'};
+              
+               # get the price range - the price is obtained to see if it's changed from the cache'd value.  If the price has
+               # changed then the full record is downloaded again.
+               if ($firstRun)
+               {
+                  $htmlSyntaxTree->setSearchStartConstraintByText($sourceID);
+                  $firstRun = 0;
+               }
+               
+               $priceString = $htmlSyntaxTree->getNextTextAfterPattern($sourceID);
+               $price = $documentReader->strictNumber($documentReader->parseNumber($priceString, 1));
+               if ($price)
+               {
+                  $printLogger->print("   printSearchList: checking if price changed (now '$price')\n");
+               }
                # check if the cache already contains this unique id
                # $_ is a reference to a hash                              
-               if (!$advertisedRentalProfiles->checkIfTupleExists($SOURCE_NAME, $$_{'string'}, undef))
+               if (!$advertisedRentalProfiles->checkIfTupleExists($SOURCE_NAME, $sourceID, undef, $price))
                {   
-                  $printLogger->print("   parseSearchList: adding anchor id ", $$_{'string'}, "...\n");
-                  $printLogger->print("   parseSearchList: url=", $$_{'href'}, "\n");                  
-                  push @urlList, $$_{'href'};
+                  $printLogger->print("   parseSearchList: adding anchor id ", $sourceID, "...\n");
+                  $printLogger->print("   parseSearchList: url=", $sourceURL, "\n");                  
+                  push @urlList, $sourceURL;
                }
                else
                {                 
-                  $printLogger->print("   parseSearchList: id ", $$_{'string'} , " in database.  Updating last encountered field...\n");
-                  $advertisedRentalProfiles->addEncounterRecord($SOURCE_NAME, $$_{'string'}, undef);
+                  $printLogger->print("   parseSearchList: id ", $sourceID , " in database.  Updating last encountered field...\n");
+                  $advertisedRentalProfiles->addEncounterRecord($SOURCE_NAME, $sourceID, undef);
                }
             }
          }
