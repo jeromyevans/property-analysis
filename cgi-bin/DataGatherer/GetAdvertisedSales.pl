@@ -551,7 +551,7 @@ sub validateProfile
 
    $$profileRef{'StreetNumber'} = prettyPrint($$profileRef{'StreetNumber'}, 1);
 
-   $$profileRef{'Street'} = prettyPrint($$profileRef{'StreetName'}, 1);
+   $$profileRef{'Street'} = prettyPrint($$profileRef{'Street'}, 1);
 
    $$profileRef{'City'} = prettyPrint($$profileRef{'City'}, 1);
 

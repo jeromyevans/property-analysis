@@ -402,7 +402,7 @@ sub getRecoveryPoint
    
    if ($firstLine)
    {
-      # decode timestamp into time elements
+      # decode timestamp into time Stelements
       $year = substr($firstLine, 0, 4);
       $month = substr($firstLine, 4, 2);
       $day = substr($firstLine, 6, 2);
@@ -448,6 +448,8 @@ sub readLogFileList
    my @completeFileList;
    my @filteredFileList;
    
+   $recoveryEpoch = timelocal($recoverySec, $recoveryMin, $recoveryHour, $recoveryDay, $recoveryMonth, $recoveryYear);
+   
    # fetch names of files in the recovery directory
    $printLogger->print("Reading recovery path...\n");
    opendir(DIR, $recoveryPath) or die "Can't open $recoveryPath: $!";
@@ -488,10 +490,10 @@ sub readLogFileList
          $hour = substr($timestamp, 8, 2);
          $min = substr($timestamp, 10, 2);
          $sec = substr($timestamp, 12, 2);
-         
+   
+         $fileEpoch = timelocal($sec, $min, $hour, $day, $month, $year);
          # compare the timestamp to the recovery time
-         if (($year >= $recoveryYear) && ($month >= $recoveryMonth) && ($day >= $recoveryDay) &&
-             ($hour >= $recoveryHour) && ($min >= $recoveryMonth) && ($sec >= $recoverySec))
+         if ($fileEpoch >= $recoveryEpoch)
          {
             # accept this filename - add it to the list
             $filteredFileList[$index] = $recoveryPath."/".$_;
@@ -1056,7 +1058,7 @@ sub validateProfile
 
    $$profileRef{'StreetNumber'} = prettyPrint($$profileRef{'StreetNumber'}, 1);
 
-   $$profileRef{'Street'} = prettyPrint($$profileRef{'StreetName'}, 1);
+   $$profileRef{'Street'} = prettyPrint($$profileRef{'Street'}, 1);
 
    $$profileRef{'City'} = prettyPrint($$profileRef{'City'}, 1);
 
