@@ -8,9 +8,16 @@
 # Description:
 #   Module that encapsulate the PropertyTypes database component
 # 
+#   TYPE_HOUSE=4   (houses)
+#   TYPE_UNIT=1    (units, flats, villas, etc)
+#   TYPE_LAND=5    (land)
+#   TYPE_ALL=9     (houses, units, tourist, non-commercial, non-rural)
+#   TYPE_UNKNOWN=0
+#
 # History:
 #  13 November 2004 - this module isn't working yet.
-
+#  13 March 2005 - Major change for use by SuburbPerformanceTable
+#
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -42,10 +49,24 @@ use SQLClient;
 sub new
 {   
    my $sqlClient = shift;
+   my $typeDefinitions = 
+   {
+      TYPE_UNKNOWN => 0,
+      TYPE_UNIT => 1,
+      TYPE_COMMERCIAL => 2,
+      TYPE_RURAL => 3,
+      TYPE_HOUSE => 4,
+      TYPE_LAND => 5,
+      TYPE_SENIORS => 6,
+      TYPE_TOURIST => 7,
+      TYPE_OTHER => 8,
+      TYPE_ALL => 9
+   };
    
    my $propertyTypes = { 
       sqlClient => $sqlClient,
-      tableName => "PropertyTypes"
+      tableName => "PropertyTypes",
+      typeDefinitions => $typeDefinitions
    }; 
       
    bless $propertyTypes;     
@@ -88,19 +109,6 @@ sub createTable
    my $success = 0;
    my $sqlClient = $this->{'sqlClient'};
    
-     
-   my $DEFINED_PROPERTY_TYPES = {
-         Unknown => 0,
-         Unit => 1,
-         Commercial => 2,
-         Rural => 3,
-         House => 4,
-         Land => 5,
-         Seniors => 6,
-         Tourist => 7,
-         Other => 8
-   }; 
-   
    if ($sqlClient)
    {
       $statement = $sqlClient->prepareStatement($SQL_CREATE_TABLE_STATEMENT);
@@ -109,10 +117,14 @@ sub createTable
       {
          $success = 1;
                   
-         while(($key, $value) = each(%$DEFINED_PROPERTY_TYPES)) 
+         while(($key, $value) = each(%$this)) 
          {
-            # do something with $key and $value
-            $this->addRecord($value, $key);
+            # only use the TYPE_ definitions in the this hash
+            if ($key =~ /TYPE_/)
+            {
+               # add the key and record to the SQL table
+               $this->addRecord($value, $key);
+            }
          }
       }
    }
@@ -206,7 +218,7 @@ sub dropTable
       
       if ($sqlClient->executeStatement($statement))
       {
-              $success = 1;
+         $success = 1;
       }
    }
    
@@ -219,27 +231,13 @@ sub dropTable
 # maps the property type specified to a property type index
 sub mapPropertyType
 {   
-   my $sqlClient = shift;
+   my $this = shift;
    my $typeDescription = shift;
    my $typeName;
    my $matchedType;
-      
-   my $DEFINED_PROPERTY_TYPES = {
-      Unknown => 0,
-      Unit => 1,
-      Commercial => 2,
-      Rural => 3,
-      House => 4,
-      Land => 5,
-      Seniors => 6,
-      Tourist => 7,
-      Other => 8
-   };
    
-   while(($key, $value) = each(%DEFINED_PROPERTY_TYPES)) 
-   {
-      print "$key=$value\n";
-   }      
+   my $sqlClient = $this->{'sqlClient'};
+   $typeDefinitions = $this->{'typeDefinitions'};
    
    if ($sqlClient)
    {
@@ -248,48 +246,48 @@ sub mapPropertyType
          if ($typeDescription =~ /Apartment|Flat|Unit|Duplex|Semi|Studio|Terrace|Townhouse|Villa/i) 
          {
             # apartment/unit-like properties
-            $typeIndex = $$DEFINED_PROPERTY_TYPES{'Unit'}
+            $typeIndex = $typeDefinitions->{'TYPE_UNIT'};
          }
          else
          {
              if ($typeDescription =~ /Commercial|Warehouse/i)
              {
                 # commercial/industrial
-                $typeIndex = $DEFINED_PROPERTY_TYPES{'Commercial'}
+                $typeIndex = $typeDefinitions->{'TYPE_COMMERCIAL'};
              }
              else
              {
                 if ($typeDescription =~ /Farm|Rural/i) 
                 {
-                   $typeIndex = $DEFINED_PROPERTY_TYPES{'Rural'}
+                   $typeIndex = $typeDefinitions->{'TYPE_RURAL'};
                 }
                 else
                 {
                    if ($typeDescription =~ /Leisure|Tourist/i) 
                    {
-                      $typeIndex = $DEFINED_PROPERTY_TYPES{'Tourist'}
+                      $typeIndex = $typeDefinitions->{'TYPE_TOURIST'};
                    }
                    else
                    {
                       if ($typeDescription =~ /House/i) 
                       {
-                          $typeIndex = $DEFINED_PROPERTY_TYPES{'House'}
+                          $typeIndex = $typeDefinitions->{'TYPE_HOUSE'};
                       }
                       else
                       {
                          if ($typeDescription =~ /Land/i) 
                          {
-                             $typeIndex = $DEFINED_PROPERTY_TYPES{'Land'}
+                             $typeIndex = $typeDefinitions->{'TYPE_LAND'};
                          }
                          else
                          {
                             if ($typeDescription =~ /Retirement|Seniors/i) 
                             {
-                               $typeIndex = $DEFINED_PROPERTY_TYPES{'Seniors'}
+                               $typeIndex = $typeDefinitions->{'TYPE_SENIORS'};
                             }
                             else  
                             {   
-                               $typeIndex = $DEFINED_PROPERTY_TYPES{'Unknown'}
+                               $typeIndex = $typeDefinitions->{'TYPE_UNKNOWN'};
                             }
                          }
                       }
@@ -300,12 +298,12 @@ sub mapPropertyType
       }
       else
       {
-         $typeIndex = $DEFINED_PROPERTY_TYPES{'Unknown'}
+         $typeIndex = $typeDefinitions->{'TYPE_UNKNOWN'};
       }
    }
    else
    {   
-      $typeIndex = $DEFINED_PROPERTY_TYPES{'Unknown'}
+      $typeIndex = $typeDefinitions->{'TYPE_UNKNOWN'};
    }
    
    return $typeIndex;
@@ -314,4 +312,120 @@ sub mapPropertyType
 
 # -------------------------------------------------------------------------------------------------
 
+# returns the typeIndex for 'house'
+sub houses
+{
+   my $this = shift;
+   
+   $typeDefinitions = $this->{'typeDefinitions'};
+   $typeIndex = $typeDefinitions->{'TYPE_HOUSE'};
+   
+   return $typeIndex;
+}
+
+# -------------------------------------------------------------------------------------------------
+
+# returns the typeIndex for 'units'
+sub units
+{
+   my $this = shift;
+ 
+   $typeDefinitions = $this->{'typeDefinitions'};
+   $typeIndex = $typeDefinitions->{'TYPE_UNIT'};
+   
+   return $typeIndex;
+}
+
+# -------------------------------------------------------------------------------------------------
+
+# returns the typeIndex for 'all'
+sub all
+{
+   my $this = shift;
+   
+   $typeDefinitions = $this->{'typeDefinitions'};
+   $typeIndex = $typeDefinitions->{'TYPE_ALL'};
+   
+   return $typeIndex;
+}
+
+# -------------------------------------------------------------------------------------------------
+
+# returns the typeIndex for 'land'
+sub land
+{
+   my $this = shift;
+   
+   $typeDefinitions = $this->{'typeDefinitions'};
+   $typeIndex = $typeDefinitions->{'TYPE_LAND'};
+   
+   return $typeIndex;
+}
+
+# -------------------------------------------------------------------------------------------------
+
+# -------------------------------------------------------------------------------------------------
+
+# returns an SQL search constraint to use in select statements for the specified property type
+# The search is based on the string used for the type name, not the type index
+# eg. If you specify TYPE_UNIT the name can be apartment, flat, unit, townhouse etc
+sub lookupSearchConstraintByTypeName
+{
+   my $this = shift;
+   my $typeIndex = shift;
+
+   my $typeDefinitions = $this->{'typeDefinitions'};
+   
+   if ($typeIndex == $typeDefinitions->{'TYPE_HOUSE'})
+   {  
+      $searchConstraint = "Type like '%house%'";         
+   }
+   elsif ($typeIndex == $typeDefinitions->{'TYPE_UNIT'})
+   {
+      $searchConstraint = "(Type like '%Apartment%' or Type like '%Flats%' or Type like '%Unit%' or Type like '%Townhouse%' or Type like '%Villa%' or Type like '%Studio%' or Type like '%Terrace%')";         
+   }
+   elsif ($typeIndex == $typeDefinitions->{'TYPE_LAND'})
+   {
+      $searchConstraint  = "Type like '%Land%'";         
+   }
+   elsif ($typeIndex == $typeDefinitions->{'TYPE_ALL'})
+   {
+      $searchConstraint = "Type not like '%Land%' and Type not like '%Lifestyle%' and Type not like '%Commercial%' and Type not like '%Warehouse%' and Type not like '%Farm%' and Type not like '%Rural%' and Type not like '%Leisure%' and Type not like '%Tourist%' and Type not like '%Retirement%' and Type not like '%Seniors%'";        
+   }
+   else
+   {
+      $searchConstraint = "Type not like '%Land%' and Type not like '%Lifestyle%'";        
+   }
+   
+   return $searchConstraint;
+}
+
+# -------------------------------------------------------------------------------------------------
+
+# returns the string name for a type
+sub getTypeName
+{
+   my $this = shift;
+   my $typeIndex = shift;
+   my $typeName = "TYPE_UNKNOWN";
+   my $found = 0;
+   my $typeDefinitions = $this->{'typeDefinitions'};
+   
+   # loop through all the defined types to find the key name matching this value
+   while(($key, $value) = each(%$typeDefinitions)) 
+   {     
+      if ($value == $typeIndex)
+      {
+         $typeName = $key;
+         $found = 1;   # NOTE: last can't be used here - breaks each function
+      }
+   }
+   if (!$found)
+   {
+      $typeName = "TYPE_UNKNOWN";
+   }
+   
+         
+   return $typeName;
+}
 

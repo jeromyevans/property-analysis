@@ -34,7 +34,7 @@
 #  7 December 2004 - added maintenance task supporting construction of the MasterPropertyComponentsXRef table from the
 #   componentOf relationships in the workingView
 #  19 January 2005 - added support for the StatusTable
-#
+#  13 March 2005 - added maintenance task for generating suburbAnalysisTable
 # To do:
 #
 #  RUN PARSERS IN A SEPARATE PROCESS | OR RUN DECODER (eg. htmlsyntaxtree) in separate process - need way to pass data in and out of the
@@ -72,6 +72,7 @@ use DomainRegions;
 use Validator_RegExSubstitutes;
 use MasterPropertyTable;
 use StatusTable;
+use SuburbAnalysisTable;
 
 # -------------------------------------------------------------------------------------------------    
 my %parameters = undef;
@@ -99,7 +100,7 @@ if (($parseSuccess) && (!($parameters{'command'} =~ /maintenance/i)))
       $originatingHTML, $validator_RegExSubstitutes, $masterPropertyTable) = initialiseTableObjects();
  
    # enable logging to disk by the SQL client
-   $sqlClient->enableLogging($parameters{'instanceID'});
+   #$sqlClient->enableLogging($parameters{'instanceID'});
    $sqlClient->connect();
    
    # hash of table objects - the key's are only significant to the local callback functions   
@@ -422,6 +423,14 @@ sub doMaintenance
       $actionOk = 1;
    }
    
+   if ($$parametersRef{'action'} =~ /suburbAnalysis/i)
+   {
+      $printLogger->print("---Performing Maintenance - updating suburb analysis ---\n");
+      maintenance_PerformSuburbAnalysis($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
+      $printLogger->print("---Finished Maintenance---\n");
+      $actionOk = 1;
+   }
+   
    if (!$actionOk)
    {
       $printLogger->print("maintenance: requested action isn't recognised\n");
@@ -438,6 +447,7 @@ sub doMaintenance
       $printLogger->print("   updateProperties  - process recently added advertisements\n");
       $printLogger->print("   constructXRef     - construct the Property->Component XRef table (built by constructPropertyTable automatically)\n");            
       $printLogger->print("   constructMasterComponents   - calculate the components of MasterPropertyTable (built by constructPropertyTable automatically)\n");            
+      $printLogger->print("   suburbAnalysis    - perform suburb analysis\n");            
       $printLogger->print("   _rebuild          - dump all views and rebuild from raw advertisements (MANUAL CHANGES WILL BE LOST)\n");            
    }
    
@@ -462,9 +472,9 @@ sub maintenance_TidySaleContents
    if ($targetDatabase)
    {
       # enable logging to disk by the SQL client
-      $sqlClient->enableLogging($instanceID);
+      #$sqlClient->enableLogging($instanceID);
       # enable logging to disk by the SQL client
-      $targetSQLClient->enableLogging("t_".$instanceID);
+      #$targetSQLClient->enableLogging("t_".$instanceID);
       
       $sqlClient->connect();
       $targetSQLClient->connect();
@@ -531,9 +541,9 @@ sub maintenance_TidyRentalContents
    if ($targetDatabase)
    {
       # enable logging to disk by the SQL client
-      $sqlClient->enableLogging($instanceID);
+      #$sqlClient->enableLogging($instanceID);
       # enable logging to disk by the SQL client
-      $targetSQLClient->enableLogging("t_".$instanceID);
+      #$targetSQLClient->enableLogging("t_".$instanceID);
       
       $sqlClient->connect();
       $targetSQLClient->connect();
@@ -599,9 +609,9 @@ sub maintenance_DeleteSaleDuplicates
    if ($targetDatabase)
    {
       # enable logging to disk by the SQL client
-      $sqlClient->enableLogging($instanceID);
+      #$sqlClient->enableLogging($instanceID);
       # enable logging to disk by the SQL client
-      $targetSQLClient->enableLogging("dups_".$instanceID);
+      #$targetSQLClient->enableLogging("dups_".$instanceID);
       
       $sqlClient->connect();
       $targetSQLClient->connect();
@@ -661,9 +671,9 @@ sub maintenance_DeleteRentalDuplicates
    if ($targetDatabase)
    {
       # enable logging to disk by the SQL client
-      $sqlClient->enableLogging($instanceID);
+      #$sqlClient->enableLogging($instanceID);
       # enable logging to disk by the SQL client
-      $targetSQLClient->enableLogging("dups_".$instanceID);
+      #$targetSQLClient->enableLogging("dups_".$instanceID);
       
       $sqlClient->connect();
       $targetSQLClient->connect();
@@ -720,7 +730,7 @@ sub maintenance_ValidateSaleContents
    my $transactionNo = 0;
    
    # enable logging to disk by the SQL client
-   $sqlClient->enableLogging($instanceID);
+   #$sqlClient->enableLogging($instanceID);
    
    $sqlClient->connect();
    
@@ -799,7 +809,7 @@ sub maintenance_ConstructWorkingViewSales
    my $transactionNo = 0;
    
    # enable logging to disk by the SQL client
-   $sqlClient->enableLogging($instanceID);
+   #$sqlClient->enableLogging($instanceID);
    
    $sqlClient->connect();
    
@@ -873,7 +883,7 @@ sub maintenance_ConstructWorkingViewRentals
    my $transactionNo = 0;
    
    # enable logging to disk by the SQL client
-   $sqlClient->enableLogging($instanceID);
+   #$sqlClient->enableLogging($instanceID);
    
    $sqlClient->connect();
    
@@ -946,7 +956,7 @@ sub maintenance_ConstructCacheViewSales
    my $transactionNo = 0;
    
    # enable logging to disk by the SQL client
-   $sqlClient->enableLogging($instanceID);
+   #$sqlClient->enableLogging($instanceID);
    
    $sqlClient->connect();
    
@@ -991,7 +1001,7 @@ sub maintenance_ConstructCacheViewRentals
    my $transactionNo = 0;
    
    # enable logging to disk by the SQL client
-   $sqlClient->enableLogging($instanceID);
+   #$sqlClient->enableLogging($instanceID);
    
    $sqlClient->connect();
    
@@ -1036,7 +1046,7 @@ sub maintenance_ConstructPropertyTable
    my $propertiesCreated = 0;
    
    # enable logging to disk by the SQL client
-   $sqlClient->enableLogging($instanceID);
+   #$sqlClient->enableLogging($instanceID);
    
    $sqlClient->connect();
    
@@ -1095,7 +1105,7 @@ sub maintenance_UpdateProperties
    my $propertiesCreated = 0;
    
    # enable logging to disk by the SQL client
-   $sqlClient->enableLogging($instanceID);
+   #$sqlClient->enableLogging($instanceID);
    
    $sqlClient->connect();
    
@@ -1149,7 +1159,7 @@ sub maintenance_Rebuild
    maintenance_ConstructCacheViewRentals($printLogger, $instanceID);
 
     # enable logging to disk by the SQL client
-   $sqlClient->enableLogging($instanceID);
+   #$sqlClient->enableLogging($instanceID);
    
    $sqlClient->connect();
    
@@ -1189,7 +1199,7 @@ sub maintenance_ConstructXRef
    my $masterPropertyTable = MasterPropertyTable::new($sqlClient, undef);
    
    # enable logging to disk by the SQL client
-   $sqlClient->enableLogging($instanceID);
+   #$sqlClient->enableLogging($instanceID);
    
    $sqlClient->connect();
    
@@ -1244,7 +1254,7 @@ sub maintenance_ConstructMasterComponents
    my $masterPropertyTable = MasterPropertyTable::new($sqlClient, $advertisedSaleProfiles);
    
    # enable logging to disk by the SQL client
-   $sqlClient->enableLogging($instanceID);
+   #$sqlClient->enableLogging($instanceID);
    
    $sqlClient->connect();
    
@@ -1275,6 +1285,36 @@ sub maintenance_ConstructMasterComponents
    print "MasterPropertyTable is synchronised\n";
 }
 
+
+# -------------------------------------------------------------------------------------------------
+# iterates through every field of the database to construct the SuburbAnalysisTable
+sub maintenance_PerformSuburbAnalysis
+{   
+   my $printLogger = shift;   
+   my $instanceID = shift;
+   my $success = 1;
+ 
+   my $sqlClient = SQLClient::new(); 
+   my $suburbAnalysisTable = SuburbAnalysisTable::new($sqlClient);
+     
+   $printLogger->print("Performing suburb analysis...\n");
+
+   # enable logging to disk by the SQL client
+   #$sqlClient->enableLogging($instanceID);
+   
+   $sqlClient->connect();
+   
+   $suburbAnalysisTable->createTable();
+   
+   $suburbAnalysisTable->performSuburbAnalysis();
+   
+   $totalRecords = $suburbAnalysisTable->countEntries();
+   
+   print "   $totalRecords records.\n";
+   print "SuburbAnalysisTable is up to date\n";
+ 
+   return $success;
+}
 
 # -------------------------------------------------------------------------------------------------
 

@@ -2,6 +2,10 @@
 # 8 Sep 04
 # Parses the logged HTTP files to recover a database automatically.
 #
+# History:
+# 13 March 2005 - disabled use of PropertyTypes table (typeIndex) as it's being re-written to better support 
+#  analysis.  It actually performed no role here (the mapPropertyType function returned null in all cases).
+#
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -19,7 +23,7 @@ use DocumentReader;
 use AdvertisedSaleProfiles;
 use AdvertisedRentalProfiles;
 use AgentStatusServer;
-use PropertyTypes;
+#use PropertyTypes;
 use HTMLParser;
 use Time::Local;
 
@@ -63,7 +67,7 @@ if ($parseSuccess)
    ($sqlClient, $advertisedSaleProfiles, $advertisedRentalProfiles, $propertyTypes) = initialiseTableObjects();
   
    # enable logging to disk by the SQL client
-   $sqlClient->enableLogging("r_".$instanceID);
+   #$sqlClient->enableLogging("r_".$instanceID);
    $sqlClient->connect();          
 
    $advertisedSaleProfiles->createTable();
@@ -911,7 +915,7 @@ sub validateProfile
    }
    
    # validate property type
-   $$profileRef{'TypeIndex'} = PropertyTypes::mapPropertyType($$profileRef{'Type'});
+#   $$profileRef{'TypeIndex'} = PropertyTypes::mapPropertyType($$profileRef{'Type'});
    
    # validate number of bedrooms
    if (($$profileRef{'Bedrooms'} > 0) || (!defined $$profileRef{'Bedrooms'}))

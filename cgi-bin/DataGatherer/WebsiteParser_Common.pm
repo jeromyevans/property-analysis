@@ -20,6 +20,8 @@
 #  5 December 2004 - adapted to use common AdvertisedPropertyProfiles instead of separate rentals and sales tables
 # 23 January 2005 - added function isSuburbNameInRange as this bit of code was commonly used by all parses to 
 #  determine if the suburbname was in the letter-range specified though parameters
+# 13 March 2005 - disabled use of PropertyTypes table (typeIndex) as it's being re-written to better support 
+#  analysis.  It actually performed no role here (the mapPropertyType function returned null in all cases).
 use PrintLogger;
 use CGI qw(:standard);
 use HTTPClient;
@@ -31,7 +33,7 @@ use DebugTools;
 use DocumentReader;
 use AdvertisedPropertyProfiles;
 use AgentStatusServer;
-use PropertyTypes;
+#use PropertyTypes;
 
 @ISA = qw(Exporter);
 
@@ -226,7 +228,7 @@ sub tidyRecord
    }
    
    # validate property type
-   $$profileRef{'TypeIndex'} = PropertyTypes::mapPropertyType($sqlClient, $$profileRef{'Type'});
+#   $$profileRef{'TypeIndex'} = PropertyTypes::mapPropertyType($sqlClient, $$profileRef{'Type'});
    
    # validate number of bedrooms
    if (($$profileRef{'Bedrooms'} > 0) || (!defined $$profileRef{'Bedrooms'}))

@@ -274,15 +274,15 @@ sub linkRecord
             # set the componentOf relationship for the source record
             $advertisedSaleProfiles->workingView_setSpecialField($$parametersRef{'Identifier'}, 'ComponentOf', $identifier);   
             
-            # add the XRef to the PropertyComponentXRef table - for faster lookup of property components
-            $this->_addXRef($identifier, $$parametersRef{'Identifier'});
-            #print "   created new property($identifier).\n";
             
-            # lookup & calculate the master components for the property
-            $this->_calculateMasterComponents($identifier);
-
+            #print "   created new property($identifier).\n";
          }
       }
+      
+      # add the XRef to the PropertyComponentXRef table - for faster lookup of property components
+      $this->_addXRef($identifier, $$parametersRef{'Identifier'});
+      # lookup & (re)calculate the master components for the property
+      $this->_calculateMasterComponents($identifier);
    }
    
    return $identifier;   

@@ -9,6 +9,10 @@
 # CONVENTIONS
 # _ indicates a private variable or method
 #
+# HISTORY
+#  20 March 2005 - modified to pass the matched parameter through to the callback function - use for parsing
+# parameters from the HTML to the parser
+
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -70,7 +74,7 @@ sub printTemplate
             $callback = $registeredCallbacks->{$1};
             if ($callback)
             {
-               $callbackResponse = &$callback();
+               $callbackResponse = &$callback($1);
                   
                # check if the response is a scaler for direct insertion
                # or a list to insert over multiple lines
