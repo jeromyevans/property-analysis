@@ -13,7 +13,9 @@
 #   6 Sep 2004 - added doSQLInsert for generic insert operations
 #              - added option to new to specify database name
 #  12 Sep 2004 - added support for logging SQL statements that write to the database
-#
+#  27 Nov 2004 - added function alterForeignKey() tha's used to change/set the value of a (non-strict) foreign key 
+# for the specified table and primary key
+# 
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -558,3 +560,60 @@ sub saveSQLLog()
       
    close(SESSION_FILE);      
 }
+
+# -------------------------------------------------------------------------------------------------
+
+# alterForeignKey
+# alters the table to change/set the value of a foreign key for the specified primary key
+# 
+# Purpose:
+#  Updating relationships in a database
+#
+# Parameters:
+#  string TableName
+#  string PrimaryKeyName
+#  integer PrimaryKeyValue
+#  string ForeignKeyName
+#  integer ForeignKeyValue
+
+# Constraints:
+#  nil
+#
+# Uses:
+#  sqlClient
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   TRUE (1) if successful, 0 otherwise
+#
+        
+sub alterForeignKey
+
+{
+   my $this = shift;
+   my $tableName = shift;
+   my $primaryKeyName = shift;
+   my $primaryKeyValue = shift;
+   my $foreignKeyName = shift;
+   my $foreignKeyValue = shift;
+   
+   my $success = 0;
+ 
+   $quotedPrimaryKeyValue = $this->quote($primaryKeyValue);
+   $quotedForeignKeyValue = $this->quote($foreignKeyValue);
+   $statementText = "UPDATE $tableName SET $foreignKeyName = $quotedForeignKeyValue WHERE $primaryKeyName = $quotedPrimaryKeyValue";
+         
+   # prepare and execute the statement
+   $statement = $this->prepareStatement($statementText);
+   
+   if ($this->executeStatement($statement))
+   {
+      $success = 1;
+   }
+
+   
+   return $success;   
+}
+

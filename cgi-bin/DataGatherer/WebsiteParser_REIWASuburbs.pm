@@ -7,6 +7,10 @@
 #   $htmlSyntaxTree
 #
 # The parsers can't access any other global variables, but can use functions in the WebsiteParser_Common module
+#
+# History:
+#  5 December 2004 - adapted to use common AdvertisedPropertyProfiles instead of separate rentals and sales tables
+#
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -21,8 +25,7 @@ use SuburbProfiles;
 #use URI::URL;
 use DebugTools;
 use DocumentReader;
-use AdvertisedSaleProfiles;
-use AdvertisedRentalProfiles;
+use AdvertisedPropertyProfiles;
 use AgentStatusServer;
 use PropertyTypes;
 use WebsiteParser_Common;

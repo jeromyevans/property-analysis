@@ -80,6 +80,11 @@
 #   This is not a trivial change - it impacted the parsing of the HTML tree (simple inputs, checkboxes and
 #   selections are kept completely separately in the way they're handled) which required a restructure
 #   of the code processing INPUTs.
+# 27 Nov 2004 - records the content in the HTMLSyntaxTree for later retrieval if desired - to support logging of
+#   HTML within the database itself rather than relying only on the HTTPClient logging function 
+#   (for better association)
+#             - added getContent function to support function above
+  
 #
 # Description:
 #   Module that accepts an HTTP::Response and runs a parser (HTTP:TreeBuilder)
@@ -156,7 +161,10 @@ sub new
       
       # reference to a list of frame URLs
       frameListLength => 0,
-      frameListRef => undef
+      frameListRef => undef,
+      
+      # 27Nov04: the original HTML content that generated this tree
+      content => undef
    };  
    bless $htmlSyntaxTree;    # make it an object of this class
    
@@ -237,6 +245,12 @@ sub parseContent
    #      $htmlForm->printForm();
    #   }
    #}
+ 
+   # 27 November 2004
+   # record the content in the HTMLSyntaxTree for later retrieval if desired - to support logging of
+   # HTML within the database itself rather than relying only on the HTTPClient logging function 
+   # (for better association)
+   $this->{'content'} = $content;
    
    return 1;
 }
@@ -2187,6 +2201,30 @@ sub printText
    }
    
    return 1;
+}
+
+
+# -------------------------------------------------------------------------------------------------
+# sub getContent
+
+# returns the content that was used to create the HTMLSyntaxTree
+# 
+# Purpose:
+#  Document parsing/logging
+#
+# Parameters:
+#  Nil
+#
+# Returns:
+#   STRING if content is defined (which it always should be), undef if not
+#
+ 
+sub getContent
+
+{
+   my $this = shift; # get this object's instance (always the first parameter)      
+   
+   return $this->{'content'};   
 }
 
 # -------------------------------------------------------------------------------------------------

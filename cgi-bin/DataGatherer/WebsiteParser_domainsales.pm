@@ -15,7 +15,6 @@
 # CURRENT PROBLEM IS THAT IF IT BOMBS OUT within a region it goes back to the start
 # of that region for some reason and doesn't seem to recover.  It's related to the
 # sesison file.
-# NEED TO FIND OUT WHY THE CACHE CHECK ISN'T WORKING IN THE SEARCH RESULTS
 #
 # 26 Oct 04 - significant re-architecting to return to the base page and clear cookies after processing each
 #  region - the theory is that it will allow NSW to be completely processed without stuffing up the 
@@ -26,10 +25,9 @@
 # 8 November 2004 - updates the way the details page is parsed to catch some variations between pages
 #   - descriptions over multiple text entries are concatinated
 #   - improved the code extracting the address that sometimes got the wrong text
-
-# create a table TransactionManagementTable:
-#   index  | suburb | region | state
-# track last processed index
+# 27 Nov 2004 - saves the HTML content that's used in the OriginatingHTML database and updates a CreatedBy foreign key 
+#   pointing back to that OriginatingHTML record
+# 5 December 2004 - adapted to use common AdvertisedPropertyProfiles instead of separate rentals and sales tables
 
 use PrintLogger;
 use CGI qw(:standard);
@@ -40,12 +38,12 @@ use SuburbProfiles;
 #use URI::URL;
 use DebugTools;
 use DocumentReader;
-use AdvertisedSaleProfiles;
-use AdvertisedRentalProfiles;
+use AdvertisedPropertyProfiles;
 use AgentStatusServer;
 use PropertyTypes;
 use WebsiteParser_Common;
 use DomainRegions;
+use OriginatingHTML;
 
 @ISA = qw(Exporter);
 
@@ -413,6 +411,7 @@ sub parseDomainSalesPropertyDetails
    my $sourceName = $documentReader->getGlobalParameter('source');
 
    my $advertisedSaleProfiles = $$tablesRef{'advertisedSaleProfiles'};
+   my $originatingHTML = $$tablesRef{'originatingHTML'};  # 27Nov04
    
    my %saleProfiles;
    my $checksum;   
@@ -424,7 +423,7 @@ sub parseDomainSalesPropertyDetails
                                          
       # parse the HTML Syntax tree to obtain the advertised sale information
       %saleProfiles = extractDomainSaleProfile($documentReader, $htmlSyntaxTree, $url);                  
-      validateProfile($sqlClient, \%saleProfiles);
+      tidyRecord($sqlClient, \%saleProfiles);        # 27Nov04 - used to be called validateProfile
       # calculate a checksum for the information - the checksum is used to approximately 
       # identify the uniqueness of the data
       $checksum = $documentReader->calculateChecksum(\%saleProfiles);
@@ -445,7 +444,14 @@ sub parseDomainSalesPropertyDetails
          {
             $printLogger->print("   parsePropertyDetails: unique checksum/url - adding new record.\n");
             # this tuple has never been extracted before - add it to the database
-            $advertisedSaleProfiles->addRecord($sourceName, \%saleProfiles, $url, $checksum, $instanceID, $transactionNo);         
+            # 27Nov04 - addRecord returns the identifer (primaryKey) of the record created
+            $identifier = $advertisedSaleProfiles->addRecord($sourceName, \%saleProfiles, $url, $checksum, $instanceID, $transactionNo);
+            
+            if ($identifier >= 0)
+            {
+               # 27Nov04: save the HTML file entry that created this record
+               $htmlIdentifier = $originatingHTML->addRecord($identifier, $url, $htmlSyntaxTree, "advertisedSaleProfiles");
+            }
          }
       }
       else

@@ -23,7 +23,15 @@
 #                    - improved parameter parsing to support generic functions.  Generic configuration file for parameters, checking
 #   and reporting of mandatory paramneters.
 #  29 October 2004 - added support for DomainRegionsn table - needed to parse domain website
-# 
+#  27 November 2004 - added support for the OriginatingHTML table - used to log the HTMLRecord that created a table entry
+#    as part of the major change to support ChangeTables
+#  28 November 2004 - added support for Validator_RegExSubstitutes table - used to store regular expressions and substitutions
+#    for use by the validation functions.  The intent it is allow new substititions to be added dynamically without 
+#    modifying the code (ie. from the exception reporting/administration page)
+#  30 November 2004 - added support for the WorkingView and CacheView tables in the maintanence tasks.  The workingView is 
+#   the baseview with aggregated changes applied.  The CacheView is a subset of fields of the original table used to 
+#   improve the speed of queries during DataGathering (checkIfTupleExists).
+#
 # To do:
 #
 #  RUN PARSERS IN A SEPARATE PROCESS | OR RUN DECODER (eg. htmlsyntaxtree) in separate process - need way to pass data in and out of the
@@ -46,8 +54,7 @@ use SuburbProfiles;
 #use URI::URL;
 use DebugTools;
 use DocumentReader;
-use AdvertisedSaleProfiles;
-use AdvertisedRentalProfiles;
+use AdvertisedPropertyProfiles;
 use AgentStatusServer;
 use PropertyTypes;
 use WebsiteParser_Common;
@@ -57,6 +64,8 @@ use WebsiteParser_REIWARentals;
 use WebsiteParser_REIWASuburbs;
 use WebsiteParser_RealEstateSales;
 use DomainRegions;
+use Validator_RegExSubstitutes;
+use MasterPropertyTable;
 
 # -------------------------------------------------------------------------------------------------    
 my %parameters = undef;
@@ -80,7 +89,8 @@ if (($parseSuccess) && (!($parameters{'command'} =~ /maintenance/i)))
    }            
    
    # initialise the objects for communicating with database tables
-   ($sqlClient, $advertisedSaleProfiles, $advertisedRentalProfiles, $propertyTypes, $suburbProfiles, $domainRegions) = initialiseTableObjects();
+   ($sqlClient, $advertisedSaleProfiles, $advertisedRentalProfiles, $propertyTypes, $suburbProfiles, $domainRegions, 
+      $originatingHTML, $validator_RegExSubstitutes, $masterPropertyTable) = initialiseTableObjects();
  
    # enable logging to disk by the SQL client
    $sqlClient->enableLogging($parameters{'instanceID'});
@@ -92,6 +102,9 @@ if (($parseSuccess) && (!($parameters{'command'} =~ /maintenance/i)))
    $myTableObjects{'propertyTypes'} = $propertyTypes;
    $myTableObjects{'suburbProfiles'} = $suburbProfiles;
    $myTableObjects{'domainRegions'} = $domainRegions;
+   $myTableObjects{'originatingHTML'} = $originatingHTML;
+   $myTableObjects{'validator_RegExSubstitutes'} = $validator_RegExSubstitutes;
+   $myTableObjects{'masterPropertyTable'} = $masterPropertyTable;
    
    # parsed into the parser functions
    $parameters{'printLogger'} = $printLogger;
@@ -241,13 +254,16 @@ sub initialiseTableObjects
 {
    my $sqlClient = SQLClient::new(); 
     
-   my $advertisedRentalProfiles = AdvertisedRentalProfiles::new($sqlClient);
-   my $advertisedSaleProfiles = AdvertisedSaleProfiles::new($sqlClient);
+   my $advertisedRentalProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Rentals');
+   my $advertisedSaleProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Sales');
    my $propertyTypes = PropertyTypes::new($sqlClient);
    my $suburbProfiles = SuburbProfiles::new($sqlClient);
    my $domainRegions = DomainRegions::new($sqlClient);
+   my $originatingHTML = OriginatingHTML::new($sqlClient);
+   my $validator_RegExSubstitutes = Validator_RegExSubstitutes::new($sqlClient);
+   my $masterPropertyTable = MasterPropertyTable::new($sqlClient);
 
-   return ($sqlClient, $advertisedSaleProfiles, $advertisedRentalProfiles, $propertyTypes, $suburbProfiles, $domainRegions);
+   return ($sqlClient, $advertisedSaleProfiles, $advertisedRentalProfiles, $propertyTypes, $suburbProfiles, $domainRegions, $originatingHTML, $validator_RegExSubstitutes, $masterPropertyTable);
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -259,24 +275,24 @@ sub doMaintenance
    my $actionOk = 0;
    
    my $sqlClient = SQLClient::new(); 
-   my $advertisedSaleProfiles = AdvertisedSaleProfiles::new($sqlClient);
+   my $advertisedSaleProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Sales');
    my $propertyTypes = PropertyTypes::new($sqlClient);
    
    my $targetSQLClient = SQLClient::new($$parametersRef{'database'});
-   my $targetAdvertisedSaleProfiles = AdvertisedSaleProfiles::new($targetSQLClient);
+   my $targetAdvertisedSaleProfiles = AdvertisedPropertyProfiles::new($targetSQLClient, 'Sales');
   
-   if ($$parametersRef{'action'} =~ /validatesale/i)
+   if ($$parametersRef{'action'} =~ /tidysale/i)
    {
-      $printLogger->print("---Performing Maintenance - Validate Sales---\n");
-      maintenance_ValidateSaleContents($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
+      $printLogger->print("---Performing Maintenance - Tidy Sales---\n");
+      maintenance_TidySaleContents($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
       $printLogger->print("---Finished Maintenance---\n");
       $actionOk = 1;
    }
    
-   if ($$parametersRef{'action'} =~ /validaterental/i)
+   if ($$parametersRef{'action'} =~ /tidyrental/i)
    {
-      $printLogger->print("---Performing Maintenance - Validate Rentals---\n");
-      maintenance_ValidateRentalContents($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
+      $printLogger->print("---Performing Maintenance - Tidy Rentals---\n");
+      maintenance_TidyRentalContents($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
       $printLogger->print("---Finished Maintenance---\n");
       $actionOk = 1;
 
@@ -298,31 +314,104 @@ sub doMaintenance
       $actionOk = 1;
    }
    
+   if ($$parametersRef{'action'} =~ /validatesale/i)
+   {
+      $printLogger->print("---Performing Maintenance - Validate Sales---\n");
+      maintenance_ValidateSaleContents($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
+      $printLogger->print("---Finished Maintenance---\n");
+      $actionOk = 1;
+   }
+   
+   if ($$parametersRef{'action'} =~ /ConstructWorkingViewSales/i)
+   {
+      $printLogger->print("---Performing Maintenance - Construct Working View---\n");
+      maintenance_ConstructWorkingViewSales($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
+      $printLogger->print("---Finished Maintenance---\n");
+      $actionOk = 1;
+   }
+   
+   if ($$parametersRef{'action'} =~ /ConstructCacheViewSales/i)
+   {
+      $printLogger->print("---Performing Maintenance - Construct Cache View---\n");
+      maintenance_ConstructCacheViewSales($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
+      $printLogger->print("---Finished Maintenance---\n");
+      $actionOk = 1;
+   }
+   
+   if ($$parametersRef{'action'} =~ /ConstructWorkingViewRentals/i)
+   {
+      $printLogger->print("---Performing Maintenance - Construct Working View---\n");
+      maintenance_ConstructWorkingViewRentals($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
+      $printLogger->print("---Finished Maintenance---\n");
+      $actionOk = 1;
+   }
+   
+   if ($$parametersRef{'action'} =~ /ConstructCacheViewRentals/i)
+   {
+      $printLogger->print("---Performing Maintenance - Construct Cache View---\n");
+      maintenance_ConstructCacheViewRentals($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
+      $printLogger->print("---Finished Maintenance---\n");
+      $actionOk = 1;
+   }
+   
+   if ($$parametersRef{'action'} =~ /ConstructPropertyTable/i)
+   {
+      $printLogger->print("---Performing Maintenance - Construct MasterPropertyTable---\n");
+      maintenance_ConstructPropertyTable($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
+      $printLogger->print("---Finished Maintenance---\n");
+      $actionOk = 1;
+   }
+   
+   if ($$parametersRef{'action'} =~ /updateProperties/i)
+   {
+      $printLogger->print("---Performing Maintenance - updateProperties ---\n");
+      maintenance_UpdateProperties($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
+      $printLogger->print("---Finished Maintenance---\n");
+      $actionOk = 1;
+   }
+   
+   if ($$parametersRef{'action'} =~ /rebuild/i)
+   {
+      $printLogger->print("---Performing Maintenance - rebuilding!!! ---\n");
+      maintenance_Rebuild($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
+      $printLogger->print("---Finished Maintenance---\n");
+      $actionOk = 1;
+   }
+   
    if (!$actionOk)
    {
       $printLogger->print("maintenance: requested action isn't recognised\n");
-      $printLogger->print("   validateSale     - validate & update the sales database entries\n");
-      $printLogger->print("   validateRental   - validate & update the rental database entries\n");
+      $printLogger->print("   tidySale         - tidy & update the sales database entries\n");
+      $printLogger->print("   tidyRental       - tidy & update the rental database entries\n");
       $printLogger->print("   duplicateSale    - delete duplicate sales database entries\n");
       $printLogger->print("   duplicateRental  - delete duplicate rental database entries\n");
+      $printLogger->print("   validateSale     - validate sales database entries\n");
+      $printLogger->print("   constructWorkingViewSales   - rebuild the WorkingView table\n");
+      $printLogger->print("   constructCacheViewSales     - rebuild the CacheView table\n");
+      $printLogger->print("   constructWorkingViewRentals - rebuild the WorkingView table\n");
+      $printLogger->print("   constructCacheViewRentals   - rebuild the CacheView table\n");
+      $printLogger->print("   constructPropertyTable      - rebuild the MasterPropertyTable\n");
+      $printLogger->print("   updateProperties  - process recently added advertisements\n");
+      $printLogger->print("   rebuild           - dump all views and rebuild from raw advertisements (MANUAL CHANGES WILL BE LOST)\n");            
    }
+   
 }
 
 # -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
 # iterates through every field of the database and runs the validate function on it
 # updated fields are stored in the target database
-sub maintenance_ValidateSaleContents
+sub maintenance_TidySaleContents
 {   
    my $printLogger = shift;   
    my $instanceID = shift;
    my $targetDatabase = shift;
   
    my $sqlClient = SQLClient::new(); 
-   my $advertisedSaleProfiles = AdvertisedSaleProfiles::new($sqlClient);
+   my $advertisedSaleProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Sales');
    my $propertyTypes = PropertyTypes::new($sqlClient);
    my $targetSQLClient = SQLClient::new($targetDatabase);
-   my $targetAdvertisedSaleProfiles = AdvertisedSaleProfiles::new($targetSQLClient);
+   my $targetAdvertisedSaleProfiles = AdvertisedPropertyProfiles::new($targetSQLClient, 'Sales');
   
    if ($targetDatabase)
    {
@@ -351,7 +440,7 @@ sub maintenance_ValidateSaleContents
          $oldChecksum = $$_{'checksum'};
          #$printLogger->print($$_{'DateEntered'}, " ", $$_{'SourceName'}, " ", $$_{'SuburbName'}, "(", $_{'SuburbIndex'}, ") oldChecksum=", $$_{'Checksum'});
    
-         validateProfile($sqlClient, $_);
+         tidyRecord($sqlClient, $_);
          
          # IMPORTANT: delete the Identifier element of the hash so it's not included in the checksum - otherwise the checksum 
          # would always differ between attributes
@@ -381,17 +470,17 @@ sub maintenance_ValidateSaleContents
 # -------------------------------------------------------------------------------------------------
 # iterates through every field of the database and runs the validate function on it
 # updated fields are stored in the target database
-sub maintenance_ValidateRentalContents
+sub maintenance_TidyRentalContents
 {   
    my $printLogger = shift;   
    my $instanceID = shift;
    my $targetDatabase = shift;
   
    my $sqlClient = SQLClient::new(); 
-   my $advertisedRentalProfiles = AdvertisedRentalProfiles::new($sqlClient);
+   my $advertisedRentalProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Rentals');
    my $propertyTypes = PropertyTypes::new($sqlClient);
    my $targetSQLClient = SQLClient::new($targetDatabase);
-   my $targetAdvertisedRentalProfiles = AdvertisedRentalProfiles::new($targetSQLClient);
+   my $targetAdvertisedRentalProfiles = AdvertisedPropertyProfiles::new($targetSQLClient, 'Rentals');
   
    if ($targetDatabase)
    {
@@ -420,7 +509,7 @@ sub maintenance_ValidateRentalContents
          $oldChecksum = $$_{'checksum'};
          #$printLogger->print($$_{'DateEntered'}, " ", $$_{'SourceName'}, " ", $$_{'SuburbName'}, "(", $_{'SuburbIndex'}, ") oldChecksum=", $$_{'Checksum'});
    
-         validateProfile($sqlClient, $_);
+         tidyRecord($sqlClient, $_);
          
          # IMPORTANT: delete the Identifier element of the hash so it's not included in the checksum - otherwise the checksum 
          # would always differ between attributes
@@ -456,10 +545,10 @@ sub maintenance_DeleteSaleDuplicates
    my $targetDatabase = shift;
   
    my $sqlClient = SQLClient::new(); 
-   my $advertisedSaleProfiles = AdvertisedSaleProfiles::new($sqlClient);
+   my $advertisedSaleProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Sales');
    my $propertyTypes = PropertyTypes::new($sqlClient);
    my $targetSQLClient = SQLClient::new($targetDatabase);
-   my $targetAdvertisedSaleProfiles = AdvertisedSaleProfiles::new($targetSQLClient);
+   my $targetAdvertisedSaleProfiles = AdvertisedPropertyProfiles::new($targetSQLClient, 'Sales');
   
    if ($targetDatabase)
    {
@@ -518,10 +607,10 @@ sub maintenance_DeleteRentalDuplicates
    my $targetDatabase = shift;
   
    my $sqlClient = SQLClient::new(); 
-   my $advertisedRentalProfiles = AdvertisedRentalProfiles::new($sqlClient);
+   my $advertisedRentalProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Rentals');
    my $propertyTypes = PropertyTypes::new($sqlClient);
    my $targetSQLClient = SQLClient::new($targetDatabase);
-   my $targetAdvertisedRentalProfiles = AdvertisedRentalProfiles::new($targetSQLClient);
+   my $targetAdvertisedRentalProfiles = AdvertisedPropertyProfiles::new($targetSQLClient, 'Rentals');
   
    if ($targetDatabase)
    {
@@ -570,7 +659,438 @@ sub maintenance_DeleteRentalDuplicates
    }
 }
 
+
 # -------------------------------------------------------------------------------------------------
+# iterates through every field of the database and runs the validate function on it
+# Changes are tracked
+sub maintenance_ValidateSaleContents
+{   
+   my $printLogger = shift;   
+   my $instanceID = shift;
+  
+   my $sqlClient = SQLClient::new(); 
+   my $advertisedSaleProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Sales');
+   my $propertyTypes = PropertyTypes::new($sqlClient);
+   my $transactionNo = 0;
+   
+   # enable logging to disk by the SQL client
+   $sqlClient->enableLogging($instanceID);
+   
+   $sqlClient->connect();
+   
+   $printLogger->print("Fetching Validator RegEx patterns...\n");
+
+   # load the table of validator substitutions defined in the database
+   @regExSubstitutionPatterns = $sqlClient->doSQLSelect("select * from Validator_RegExSubstitutes"); 
+
+   $printLogger->print("Fetching INVALID database records from WORKING VIEW...\n");
+   
+   @selectResult = $sqlClient->doSQLSelect("select * from WorkingView_AdvertisedSaleProfiles where ValidityCode > 0 order by DateEntered");
+   $length = @selectResult;
+   $printLogger->print("   $length records.\n");
+
+   $printLogger->print("Performing database validation...\n");
+
+   $transactionNo = 0;
+   foreach (@selectResult)
+   {
+      # $_ is a reference to a hash for the row of the table
+      $oldChecksum = $$_{'checksum'};
+      #$printLogger->print($$_{'DateEntered'}, " ", $$_{'SourceName'}, " ", $$_{'SuburbName'}, "(", $_{'SuburbIndex'}, ") oldChecksum=", $$_{'Checksum'});
+
+      $changed = validateRecord($sqlClient, $_, \@regExSubstitutionPatterns, $advertisedSaleProfiles, $instanceID, $transactionNo);
+      if ($changed)
+      {
+         $transactionNo++;
+         print "   changed $transactionNo records\n";
+      }
+   }
+   print "   Validation complete. $transactionNo records 'changed'.\n";
+
+   $sqlClient->disconnect();
+
+}
+
+# -------------------------------------------------------------------------------------------------
+
+# -------------------------------------------------------------------------------------------------
+# iterates through every field of the database and all changes to construct the working view
+sub maintenance_ConstructWorkingViewSales
+{   
+   my $printLogger = shift;   
+   my $instanceID = shift;
+  
+   my $sqlClient = SQLClient::new(); 
+   my $advertisedSaleProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Sales');
+   my $propertyTypes = PropertyTypes::new($sqlClient);
+   my $transactionNo = 0;
+   
+   # enable logging to disk by the SQL client
+   $sqlClient->enableLogging($instanceID);
+   
+   $sqlClient->connect();
+   
+   $printLogger->print("Fetching database records...\n");
+   
+   # get the content of the database
+   @selectResult = $sqlClient->doSQLSelect("select Identifier from AdvertisedSaleProfiles order by DateEntered");
+   
+   # add to the workingView...
+   $length = @selectResult;
+   $printLogger->print("   $length records.\n");
+    
+   $printLogger->print("Erasing the working view...\n");
+   
+   $statement = $sqlClient->prepareStatement("delete from WorkingView_AdvertisedSaleProfiles");
+   $sqlClient->executeStatement($statement);
+   
+   $printLogger->print("Constructing original view...\n");
+   
+   foreach (@selectResult)
+   {
+      # $_ is a reference to a hash for the row of the table
+      $advertisedSaleProfiles->copyToWorkingView($$_{'Identifier'});
+   }
+   
+   $printLogger->print("Fetching change records...\n");
+    # get the content of the database
+   @selectResult = $sqlClient->doSQLSelect("select * from ChangeTable_AdvertisedSaleProfiles order by DateEntered");
+   $length = @selectResult;
+   $printLogger->print("   $length records.\n");
+   $printLogger->print("Applying changes...\n");
+   
+   foreach (@selectResult)
+   {
+      $changesRecord = $$_{'ChangesRecord'};
+      # delete special fields from the record
+      delete $$_{'ChangesRecord'};  # not used in workingVIew
+      delete $$_{'ChangedBy'};      # not used in workingView
+      delete $$_{'Identifier'};     # not used in workingView - changesRecord is used
+      delete $$_{'InstanceID'};     # original to be maintained
+      delete $$_{'DateEntered'};    # original to be maintained
+      delete $$_{'TransactionNo'};  # original to be maintained
+
+      # delete null fields from the record (no changes)
+      while(($key, $value) = each(%$_))
+      {
+         if (!defined $value)
+         {
+            # remove this parameter
+            delete $$_{$key};
+         }
+      }
+      
+      $advertisedSaleProfiles->_workingView_changeRecord($_, $changesRecord);
+   }
+   
+   print "WorkingView is synchronised\n";
+   
+}
+
+# -------------------------------------------------------------------------------------------------
+# iterates through every field of the database and all changes to construct the working view
+sub maintenance_ConstructWorkingViewRentals
+{   
+   my $printLogger = shift;   
+   my $instanceID = shift;
+  
+   my $sqlClient = SQLClient::new(); 
+   my $advertisedRentalProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Rentals');
+   my $propertyTypes = PropertyTypes::new($sqlClient);
+   my $transactionNo = 0;
+   
+   # enable logging to disk by the SQL client
+   $sqlClient->enableLogging($instanceID);
+   
+   $sqlClient->connect();
+   
+   $printLogger->print("Fetching database records...\n");
+   
+   # get the content of the database
+   @selectResult = $sqlClient->doSQLSelect("select Identifier from AdvertisedRentalProfiles order by DateEntered");
+   
+   # add to the workingView...
+   $length = @selectResult;
+   $printLogger->print("   $length records.\n");
+    
+   $printLogger->print("Erasing the working view...\n");
+   
+   $statement = $sqlClient->prepareStatement("delete from WorkingView_AdvertisedRentalProfiles");
+   $sqlClient->executeStatement($statement);
+   
+   $printLogger->print("Constructing original view...\n");
+   
+   foreach (@selectResult)
+   {
+      # $_ is a reference to a hash for the row of the table
+      $advertisedRentalProfiles->copyToWorkingView($$_{'Identifier'});
+   }
+   
+   $printLogger->print("Fetching change records...\n");
+    # get the content of the database
+   @selectResult = $sqlClient->doSQLSelect("select * from ChangeTable_AdvertisedRentalProfiles order by DateEntered");
+   $length = @selectResult;
+   $printLogger->print("   $length records.\n");
+   $printLogger->print("Applying changes...\n");
+   
+   foreach (@selectResult)
+   {
+      $changesRecord = $$_{'ChangesRecord'};
+      # delete special fields from the record
+      delete $$_{'ChangesRecord'};  # not used in workingVIew
+      delete $$_{'ChangedBy'};      # not used in workingView
+      delete $$_{'Identifier'};     # not used in workingView - changesRecord is used
+      delete $$_{'InstanceID'};     # original to be maintained
+      delete $$_{'DateEntered'};    # original to be maintained
+      delete $$_{'TransactionNo'};  # original to be maintained
+
+      # delete null fields from the record (no changes)
+      while(($key, $value) = each(%$_))
+      {
+         if (!defined $value)
+         {
+            # remove this parameter
+            delete $$_{$key};
+         }
+      }
+      
+      $advertisedRentalProfiles->_workingView_changeRecord($_, $changesRecord);
+   }
+   
+   print "WorkingView is synchronised\n";
+}
+
+# -------------------------------------------------------------------------------------------------
+# iterates through every field of the database and all changes to construct the cache view
+sub maintenance_ConstructCacheViewSales
+{   
+   my $printLogger = shift;   
+   my $instanceID = shift;
+  
+   my $sqlClient = SQLClient::new(); 
+   my $advertisedSaleProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Sales');
+   my $propertyTypes = PropertyTypes::new($sqlClient);
+   my $transactionNo = 0;
+   
+   # enable logging to disk by the SQL client
+   $sqlClient->enableLogging($instanceID);
+   
+   $sqlClient->connect();
+   
+   $printLogger->print("Fetching database records...\n");
+   
+   # get the content of the database
+   @selectResult = $sqlClient->doSQLSelect("select Identifier, SourceName, SourceID, Checksum, AdvertisedPriceLower from AdvertisedSaleProfiles order by DateEntered");
+   
+   # add to the workingView...
+   $length = @selectResult;
+   $printLogger->print("   $length records.\n");
+    
+   $printLogger->print("Erasing the cache view...\n");
+   
+   $statement = $sqlClient->prepareStatement("delete from CacheView_AdvertisedSaleProfiles");
+   $sqlClient->executeStatement($statement);
+   
+   $printLogger->print("Constructing cache view...\n");
+   
+   foreach (@selectResult)
+   {
+      # $_ is a reference to a hash for the row of the table
+      # add the cached fields to the cacheView
+      $advertisedSaleProfiles->_cacheView_addRecord($$_{'Identifier'}, $$_{'SourceName'}, $_, $$_{'Checksum'});
+   }
+   
+   print "CacheView is synchronised\n";
+   
+}
+
+
+# -------------------------------------------------------------------------------------------------
+# iterates through every field of the database and all changes to construct the cache view
+sub maintenance_ConstructCacheViewRentals
+{   
+   my $printLogger = shift;   
+   my $instanceID = shift;
+  
+   my $sqlClient = SQLClient::new(); 
+   my $advertisedRentalProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Rentals');
+   my $propertyTypes = PropertyTypes::new($sqlClient);
+   my $transactionNo = 0;
+   
+   # enable logging to disk by the SQL client
+   $sqlClient->enableLogging($instanceID);
+   
+   $sqlClient->connect();
+   
+   $printLogger->print("Fetching database records...\n");
+   
+   # get the content of the database
+   @selectResult = $sqlClient->doSQLSelect("select Identifier, SourceName, SourceID, Checksum, AdvertisedWeeklyRent from AdvertisedRentalProfiles order by DateEntered");
+   
+   # add to the workingView...
+   $length = @selectResult;
+   $printLogger->print("   $length records.\n");
+    
+   $printLogger->print("Erasing the cache view...\n");
+   
+   $statement = $sqlClient->prepareStatement("delete from CacheView_AdvertisedRentalProfiles");
+   $sqlClient->executeStatement($statement);
+   
+   $printLogger->print("Constructing cache view...\n");
+   
+   foreach (@selectResult)
+   {
+      # $_ is a reference to a hash for the row of the table
+      # add the cached fields to the cacheView
+      $advertisedRentalProfiles->_cacheView_addRecord($$_{'Identifier'}, $$_{'SourceName'}, $_, $$_{'Checksum'});
+   }
+   
+   print "CacheView is synchronised\n";   
+}
+
+
+# -------------------------------------------------------------------------------------------------
+# iterates through every field of the database and all changes to construct the PropertyTable
+sub maintenance_ConstructPropertyTable
+{   
+   my $printLogger = shift;   
+   my $instanceID = shift;
+  
+   my $sqlClient = SQLClient::new(); 
+   my $masterPropertyTable = MasterPropertyTable::new($sqlClient);
+   my $advertisedSaleProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Sales');
+   my $transactionNo = 0;
+   my $propertiesCreated = 0;
+   
+   # enable logging to disk by the SQL client
+   $sqlClient->enableLogging($instanceID);
+   
+   $sqlClient->connect();
+   
+   $printLogger->print("Fetching VALID WORKING VIEW database records...\n");
+   
+   # get the content of the database
+   @selectResult = $sqlClient->doSQLSelect("select Identifier, StreetNumber, Street, SuburbName, SuburbIndex, State from WorkingView_AdvertisedSaleProfiles where ValidityCode = 0 order by DateEntered");
+   
+   # add to the workingView...
+   $length = @selectResult;
+   $printLogger->print("   $length records.\n");
+    
+   #$printLogger->print("Erasing the MasterPropertyTable...\n");
+   
+   #$statement = $sqlClient->prepareStatement("delete from MasterPropertyTable");
+   #$sqlClient->executeStatement($statement);
+   
+   $printLogger->print("Constructing MasterPropertyTable (continuing existing)...\n");
+   
+   foreach (@selectResult)
+   {
+      $identifier = $masterPropertyTable->linkRecord($_);
+      if ((defined $identifier) && ($identifier >= 0))
+      {
+         # link the workingview record as a componentOf the property using the returned identifier
+         $propertiesCreated++;
+        
+         $advertisedSaleProfiles->workingView_setSpecialField($$_{'Identifier'}, 'ComponentOf', $identifier);   
+      }
+   }
+   $totalProperties = $masterPropertyTable->countEntries();
+   
+   print "   Linked $propertiesCreated records ($totalProperties total properties).\n";
+   print "MasterPropertyTable is synchronised\n";   
+}
+
+
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+# iterates through every field of the database and all changes to construct the PropertyTable
+sub maintenance_UpdateProperties
+{   
+   my $printLogger = shift;   
+   my $instanceID = shift;
+  
+   
+   $printLogger->print("Updating properties...\n");
+
+   maintenance_ValidateSaleContents($printLogger, $instanceID);
+   
+   
+   my $sqlClient = SQLClient::new(); 
+   my $masterPropertyTable = MasterPropertyTable::new($sqlClient);
+   my $advertisedSaleProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Sales');
+   my $transactionNo = 0;
+   my $propertiesCreated = 0;
+   
+   # enable logging to disk by the SQL client
+   $sqlClient->enableLogging($instanceID);
+   
+   $sqlClient->connect();
+   
+   $printLogger->print("Fetching UNLINKED VALID WORKING VIEW database records...\n");
+   
+   # get the content of the database
+   @selectResult = $sqlClient->doSQLSelect("select Identifier, StreetNumber, Street, SuburbName, SuburbIndex, State from WorkingView_AdvertisedSaleProfiles where ValidityCode = 0 and ComponentOf is null order by DateEntered");
+   
+   # add to the workingView...
+   $length = @selectResult;
+   $printLogger->print("   $length records.\n");
+   
+   $printLogger->print("Updating MasterPropertyTable...\n");
+   
+   foreach (@selectResult)
+   {
+      $identifier = $masterPropertyTable->linkRecord($_);
+      if ((defined $identifier) && ($identifier >= 0))
+      {
+         # link the workingview record as a componentOf the property using the returned identifier
+         $propertiesCreated++;
+        
+         $advertisedSaleProfiles->workingView_setSpecialField($$_{'Identifier'}, 'ComponentOf', $identifier);   
+      }
+   }
+   $totalProperties = $masterPropertyTable->countEntries();
+   
+   print "   Linked $propertiesCreated records ($totalProperties total properties).\n";
+   print "MasterPropertyTable is synchronised\n";
+   
+
+}
+
+
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+# dumps all views and rebuilds from scratch - shouldn't ever need to do this (only during 
+#  debugging/development).  Manual changes will be lost
+sub maintenance_Rebuild
+{   
+   my $printLogger = shift;   
+   my $instanceID = shift;
+  
+   $printLogger->print("--- Rebuilding database views from the unprocessed advertisements --- \n");
+
+   # rebuild the cache
+   $printLogger->print("STEP ONE of FIVE: Erasing the ChangeTable...\n");
+   maintenance_ConstructCacheViewSales($printLogger, $instanceID);
+   maintenance_ConstructCacheViewRentals($printLogger, $instanceID);
+   
+   $printLogger->print("STEP TWO of FIVE: Erasing the ChangeTable...\n");
+   $statement = $sqlClient->prepareStatement("delete from ChangeTable_AdvertisedSaleProfiles");
+   $sqlClient->executeStatement($statement);
+   $statement = $sqlClient->prepareStatement("delete from ChangeTable_AdvertisedRentalProfiles");
+   $sqlClient->executeStatement($statement);
+   
+   $printLogger->print("STEP THREE of FIVE: Rebuilding the clean WorkingView...\n");
+   # rebuild the clean working view (no changes)
+   maintenance_ConstructWorkingViewSales($printLogger, $instanceID);
+   maintenance_ConstructWorkingViewRentals($printLogger, $instanceID);
+   
+   $printLogger->print("STEP FOUR of FIVE: Applying validation changes...\n");
+   maintenance_ValidateSaleContents($printLogger, $instanceID);
+   
+   $printLogger->print("STEP FIVE of FIVE: Constructing MasterPropertiesTable...\n");
+   maintenance_ConstructPropertyTable($printLogger, $instanceID);
+}
+
 # -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
     
@@ -689,7 +1209,7 @@ sub parseParameters
    my $success = 0;
    my @startCommands = ('url', 'source', 'state');
    my @continueCommands = ('url', 'thread', 'source', 'state');
-   my @maintenanceCommands = ('database', 'action');   
+   my @maintenanceCommands = ('action');   
    # this hash of lists defines the commands supported and mandatory options for each command
    my %mandatoryParameters = (
       'start' => \@startCommands,

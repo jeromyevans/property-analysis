@@ -7,6 +7,8 @@
 #   $htmlSyntaxTree
 #
 # The parsers can't access any other global variables, but can use functions in the WebsiteParser_Common module
+# History:
+#  5 December 2004 - adapted to use common AdvertisedPropertyProfiles instead of separate rentals and sales tables
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -21,8 +23,7 @@ use SuburbProfiles;
 #use URI::URL;
 use DebugTools;
 use DocumentReader;
-use AdvertisedSaleProfiles;
-use AdvertisedRentalProfiles;
+use AdvertisedPropertyProfiles;
 use AgentStatusServer;
 use PropertyTypes;
 use WebsiteParser_Common;
@@ -254,7 +255,7 @@ sub parseREIWASalesSearchDetails
       # parse the HTML Syntax tree to obtain the advertised sale information
       %saleProfiles = extractREIWASaleProfile($documentReader, $htmlSyntaxTree, $url);
 
-      validateProfile($sqlClient, \%saleProfiles);
+      tidyRecord($sqlClient, \%saleProfiles);        # 27Nov04 - used to be called validateProfile
 #       DebugTools::printHash("sa;e", \%saleProfiles);
               
       # calculate a checksum for the information - the checksum is used to approximately 

@@ -7,6 +7,9 @@
 #   $htmlSyntaxTree
 #
 # The parsers can't access any other global variables, but can use functions in the WebsiteParser_Common module
+#
+# History:
+#  5 December 2004 - adapted to use common AdvertisedPropertyProfiles instead of separate rentals and sales tables
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -21,8 +24,7 @@ use SuburbProfiles;
 #use URI::URL;
 use DebugTools;
 use DocumentReader;
-use AdvertisedSaleProfiles;
-use AdvertisedRentalProfiles;
+use AdvertisedPropertyProfiles;
 use AgentStatusServer;
 use PropertyTypes;
 use WebsiteParser_Common;
@@ -243,8 +245,8 @@ sub parseREIWARentalsSearchDetails
    # parse the HTML Syntax tree to obtain the advertised rental information
    %rentalProfiles = extractREIWARentalProfile($documentReader, $htmlSyntaxTree, $url);                  
             
-   validateProfile($sqlClient, \%rentalProfiles);
-print "ValidatedDesc: ", $rentalProfiles{'description'}, "\n";         
+   tidyRecord($sqlClient, \%rentalProfiles);        # 27Nov04 - used to be called validateProfile
+#print "ValidatedDesc: ", $rentalProfiles{'description'}, "\n";         
    # calculate a checksum for the information - the checksum is used to approximately 
    # identify the uniqueness of the data
    $checksum = $documentReader->calculateChecksum(\%rentalProfiles);
@@ -649,12 +651,15 @@ sub parseREIWARentalsSearchList
    
    my $printLogger = $documentReader->getGlobalParameter('printLogger');
    my $sourceName =  $documentReader->getGlobalParameter('source');
-   
+   my $tablesRef = $documentReader->getTableObjects();
+   my $advertisedRentalProfiles = $$tablesRef{'advertisedRentalProfiles'};
+
    my @urlList;
    my $firstRun = 1;        
    
    # --- now extract the property information for this page ---
    $printLogger->print("inParseSearchList ($parentLabel):\n");
+
    #$htmlSyntaxTree->printText();
    if ($htmlSyntaxTree->containsTextPattern("matching listings"))
    {         
@@ -662,7 +667,7 @@ sub parseREIWARentalsSearchList
       if ($housesListRef = $htmlSyntaxTree->getAnchorsAndTextContainingPattern("\#"))
       {  
          # loop through all the entries in the log cache
-         $printLogger->print("   parseSearchList: checking if unique ID exists...\n");
+         $printLogger->print("   parseSearchList: checking if unique IDs exist...\n");
          if ($sqlClient->connect())
          {
             foreach (@$housesListRef)
@@ -682,13 +687,14 @@ sub parseREIWARentalsSearchList
                $price = $documentReader->strictNumber($documentReader->parseNumber($priceString, 1));
                if ($price)
                {
-                  $printLogger->print("   printSearchList: checking if price changed (now '$price')\n");
+                  $printLogger->print("      printSearchList: checking if price changed (now '$price')\n");
                }
                # check if the cache already contains this unique id
-               # $_ is a reference to a hash                              
+               # $_ is a reference to a hash           
+
                if (!$advertisedRentalProfiles->checkIfTupleExists($sourceName, $sourceID, undef, $price))
                {   
-                  $printLogger->print("   parseSearchList: adding anchor id ", $sourceID, "...\n");
+                  $printLogger->print("      parseSearchList: adding anchor id ", $sourceID, "...\n");
                   #$printLogger->print("   parseSearchList: url=", $sourceURL, "\n");           
                   my $httpTransaction = HTTPTransaction::new($sourceURL, $url, $parentLabel.".".$sourceID);                  
              
@@ -696,7 +702,7 @@ sub parseREIWARentalsSearchList
                }
                else
                {                 
-                  $printLogger->print("   parseSearchList: id ", $sourceID , " in database.  Updating last encountered field...\n");
+                  $printLogger->print("      parseSearchList: id ", $sourceID , " in database.  Updating last encountered field...\n");
                   $advertisedRentalProfiles->addEncounterRecord($sourceName, $sourceID, undef);
                }
             }
