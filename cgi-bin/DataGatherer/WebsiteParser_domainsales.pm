@@ -438,7 +438,7 @@ sub parseDomainSalesPropertyDetails
             # this tuple has been previously extracted - it can be dropped
             # record that it was encountered again
             $printLogger->print("   parsePropertyDetails: identical record already encountered at $sourceName.\n");
-            #$advertisedSaleProfiles->addEncounterRecord($sourceName, $saleProfiles{'SourceID'}, $checksum);
+            $advertisedSaleProfiles->addEncounterRecord($sourceName, $saleProfiles{'SourceID'}, $checksum);
          }
          else
          {
@@ -450,7 +450,7 @@ sub parseDomainSalesPropertyDetails
             if ($identifier >= 0)
             {
                # 27Nov04: save the HTML file entry that created this record
-               #$htmlIdentifier = $originatingHTML->addRecord($identifier, $url, $htmlSyntaxTree, "advertisedSaleProfiles");
+               $htmlIdentifier = $originatingHTML->addRecord($identifier, $url, $htmlSyntaxTree, "advertisedSaleProfiles");
             }
          }
       }
@@ -467,7 +467,6 @@ sub parseDomainSalesPropertyDetails
    
    # return an empty list
    return @emptyList;
-   
 }
 
 
