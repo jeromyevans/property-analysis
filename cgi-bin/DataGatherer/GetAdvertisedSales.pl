@@ -3,6 +3,11 @@
 # Parses the detailed real-estate sales information to extract fields
 #
 #
+# 16 May 04 - bugfixed algorithm checking search range
+#           - bugfix parseSearchDetails - was looking for wrong keyword to identify page
+#           - bugfix wasn't using parameters{'url'} as start URL
+#           - added AgentStatusServer support to send status info over a TCP connection
+#
 # To do:
 #  - better logging instead of using stdout
 #  - front page for monitoring progress
@@ -23,7 +28,7 @@ use LogTable;
 use DebugTools;
 use DocumentReader;
 use AdvertisedSaleProfiles;
-
+use AgentStatusServer;
 
 # -------------------------------------------------------------------------------------------------
 # loadConfiguration
@@ -70,7 +75,7 @@ sub loadConfiguration
 #  
 # -------------------------------------------------------------------------------------------------    
 
-my $startURL = "http://www.reiwa.com.au/content-home.cfm";
+#my $startURL = "http://www.reiwa.com.au/content-home.cfm";
 #my $startURL = "http://localhost/trial/content-home.htm";
 #my $startURL = "http://localhost/trial/searchdetails4.htm";
 #my $startURL = "http://localhost/cgi-bin/CookieTests.pl"; 
@@ -80,6 +85,7 @@ my $createTables = 0;
 my $getSuburbProfiles = 0;
 my $dropTables = 0;
 my $continueSession = 0;
+my $statusPort = undef;
 
 # these two parameters are used to limit the letter range of suburbs processed
 # by this instance of the application
@@ -93,7 +99,7 @@ my $useHTML = param('html');
 
 if (!$useHTML)
 {
-   $useText = 1;  
+   $useText = 0; ##############################********************######  
 }
 
 if (!$agent)
@@ -102,6 +108,7 @@ if (!$agent)
 }
 
 my $printLogger = PrintLogger::new($agent, $agent.".stdout", 1, $useText, $useHTML);
+my $statusServer;
 
 $printLogger->printHeader("Advertised Sales\n");
 
@@ -115,7 +122,16 @@ if (!$parameters{'url'})
 }
 
 if (($parseSuccess) && ($parameters{'url'}))
-{            
+{
+   # if a status port has been specified, start the TCP server
+   if ($statusPort)
+   {      
+      $statusServer = AgentStatusServer::new($statusPort);
+      $statusServer->setStatus("running", "1");
+      $statusServer->start();
+      $printLogger->print("   main: started agent status server (port=$statusPort)\n");
+   }            
+   
    ($sqlClient, $advertisedSaleProfiles, $logTable) = initialiseTableObjects();
    # hash of table objects - the key's are only significant to the local callback functions
  
@@ -129,10 +145,10 @@ if (($parseSuccess) && ($parameters{'url'}))
    $myParsers{"searchlist"} = \&parseSearchList;
    $myParsers{"CGIPostTest"} = \&parseDisplayResponse;   
      
-   my $myDocumentReader = DocumentReader::new($agent, $startURL, $sqlClient, 
+   my $myDocumentReader = DocumentReader::new($agent, $parameters{'url'}, $sqlClient, 
       \%myTableObjects, \%myParsers, $printLogger);
    
-   $myDocumentReader->setProxy("http://netcache.dsto.defence.gov.au:8080");
+   #$myDocumentReader->setProxy("http://netcache.dsto.defence.gov.au:8080");
    $myDocumentReader->run($createTables, $startSession, $continueSession, $dropTables);
 }
 else
@@ -355,48 +371,44 @@ sub parseSearchDetails
    $printLogger->print("in parseSearchDetails\n");
    
    # --- now extract the property information for this page ---
-   if ($htmlSyntaxTree->containsTextPattern("Suburb Profile"))
-   {                                    
-      # parse the HTML Syntax tree to obtain the advertised sale information
-      %saleProfiles = extractSaleProfile($documentReader, $htmlSyntaxTree, $url);                  
+   #if ($htmlSyntaxTree->containsTextPattern("Suburb Profile"))
+   #{                                    
+   # parse the HTML Syntax tree to obtain the advertised sale information
+   %saleProfiles = extractSaleProfile($documentReader, $htmlSyntaxTree, $url);                  
             
-      # calculate a checksum for the information - the checksum is used to approximately 
-      # identify the uniqueness of the data
-      $checksum = $documentReader->calculateChecksum(\%saleProfiles);
+   # calculate a checksum for the information - the checksum is used to approximately 
+   # identify the uniqueness of the data
+   $checksum = $documentReader->calculateChecksum(\%saleProfiles);
          
-      $printLogger->print("   parseSearchDetails: extracted checksum = ", $checksum, ". Checking log...\n");
+   $printLogger->print("   parseSearchDetails: extracted checksum = ", $checksum, ". Checking log...\n");
           
-      if ($sqlClient->connect())
-      {		 	 
-         # check if the log already contains this checksum - if it does, assume the tuple already exists                  
-         if ($logTable->checkIfTupleExists($url, $checksum))
-	      {
-            # this tuple has been previously extracted - it can be dropped
-            # record in the log that it was encountered again
-            $printLogger->print("   parseSearchDetails: record already encountered at that URL.\n");
-	         $logTable->addEncounterRecord($url, $checksum);
-         }
-         else
-         {
-            $printLogger->print("   parseSearchDetails: unique checksum/url - adding new record.\n");
-            # this tuple has never been extracted before - add it to the database
-            if ($advertisedSaleProfiles->addRecord(\%saleProfiles))
-            {
-               $printLogger->print("   parseSearchDetails: recording log for sourceID ", $saleProfiles{'SourceID'}, ".\n");
-               # successfully added the tuple - log the checksum
-               $logTable->addRecord($url, $saleProfiles{'SourceID'}, $checksum);
-            }
-         }
+   if ($sqlClient->connect())
+   {		 	 
+      # check if the log already contains this checksum - if it does, assume the tuple already exists                  
+      if ($logTable->checkIfTupleExists($url, $checksum))
+	   {
+         # this tuple has been previously extracted - it can be dropped
+         # record in the log that it was encountered again
+         $printLogger->print("   parseSearchDetails: record already encountered at that URL.\n");
+	      $logTable->addEncounterRecord($url, $checksum);
       }
       else
       {
-         $printLogger->print("   parseSearchDetails:", $sqlClient->lastErrorMessage(), "\n");
+         $printLogger->print("   parseSearchDetails: unique checksum/url - adding new record.\n");
+         # this tuple has never been extracted before - add it to the database
+         if ($advertisedSaleProfiles->addRecord(\%saleProfiles))
+         {
+            $printLogger->print("   parseSearchDetails: recording log for sourceID ", $saleProfiles{'SourceID'}, ".\n");
+            # successfully added the tuple - log the checksum
+            $logTable->addRecord($url, $saleProfiles{'SourceID'}, $checksum);
+         }
       }
-   }	  
-   else 
-   {
-      $printLogger->print("parseSearchDetails: Identifier pattern not found.\n");
    }
+   else
+   {
+      $printLogger->print("   parseSearchDetails:", $sqlClient->lastErrorMessage(), "\n");
+   }
+   
    
    # return an empty list
    return @emptyList;
@@ -453,13 +465,13 @@ sub parseSearchForm
       if ($optionsRef)
       {         
          foreach (@$optionsRef)
-         {            
+         {               
             # create a duplicate of the default post parameters
             my %newPostParameters = %defaultPostParameters;            
             # and set the value to this option in the selection
             
             $newPostParameters{'subdivision'} = $_->{'value'};
-            ($firstChar, $restOfString) = split(//, $_->{'text'});
+            #($firstChar, $restOfString) = split(//, $_->{'text'});
             #print $_->{'text'}, " FC=$firstChar ($startLetter, $endLetter) ";
             $acceptSuburb = 1;
             if ($startLetter)
@@ -467,7 +479,7 @@ sub parseSearchForm
                # if the start letter is defined, use it to constrain the range of 
                # suburbs processed
                # if the first letter if less than the start then reject               
-               if ($firstChar lt $startLetter)
+               if ($_->{'text'} lt $startLetter)
                {
                   # out of range
                   $acceptSuburb = 0;
@@ -476,12 +488,11 @@ sub parseSearchForm
             }
                        
             if ($endLetter)
-            {
-               
+            {               
                # if the end letter is defined, use it to constrain the range of 
                # suburbs processed
                # if the first letter is greater than the end then reject       
-               if ($firstChar gt $endLetter)
+               if ($_->{'text'} gt $endLetter)
                {
                   # out of range
                   $acceptSuburb = 0;
@@ -833,6 +844,7 @@ sub parseParameters
    $startLetter = param("startrange");
    $endLetter = param("endrange");
    $agent = param("agent");
+   $statusPort = param("port");
 
    if (($createTables) || ($startSession) || ($continueSession) || ($dropTables))
    {

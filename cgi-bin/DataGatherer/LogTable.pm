@@ -8,6 +8,13 @@
 # Description:
 #   Module that encapsulate the LogTable database components
 #
+# History
+#  18 May 2004 - fixed bug in CheckIfUniqueIDExists that used a lowercase U in the 
+#    hash field name, causing it to never mactch the ID in the database - the 
+#    query would work, but the comparison wouldn't.  Perhaps the table in the database 
+#    during testing was 'uniqueID' not 'UniqueID' - entirely possible as it was created
+#    by 'update table' instead of 'create table'
+
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -242,7 +249,7 @@ sub checkIfUniqueIDExists
          foreach (@checksumList)
          {        
             # $_ is a reference to a hash
-            if ($$_{'uniqueID'} eq $uniqueID)            
+            if ($$_{'UniqueID'} eq $uniqueID)            
             {
                # found a match
                $found = 1;

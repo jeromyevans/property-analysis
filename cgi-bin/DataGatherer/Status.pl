@@ -18,91 +18,89 @@
 use PrintLogger;
 use CGI qw(:standard);
 use HTTPClient;
-use HTMLSyntaxTree;
 use SQLClient;
 use SuburbProfiles;
-use LogTable;
 #use URI::URL;
 use DebugTools;
-use DocumentReader;
 use AdvertisedRentalProfiles;
+use AdvertisedSaleProfiles;
 
-# -------------------------------------------------------------------------------------------------
-# loadTemplate
-# loads a template html file and parses it for registered keywords.
-# read it line by line
-#
-# Purpose:
-#  returning an HTML page
-#
-# Parameters:
-#  nil
-#
-#
-# Updates:
-#  nil
-#
-# Returns:
-#  @sessionURLStack
-#    
-sub loadTemplate
-{  
-   my $filename = shift;  
-   my $registeredCallbacks = shift;
-   my $templateText;
-   
-   if (-e $filename)
-   {       
-      open(TEMPLATE_FILE, "<$filename") || print "Can't open template: $!"; 
-               
-      $index = 0;
-      # loop through the content of the file
-      while (<TEMPLATE_FILE>) # read a line into $_
-      {
-         $templateText .= $_;
-
-         DebugTools::printHash("registeredCallbacks", $registeredCallbacks);
-        
-         # this substitute looks for a pattern inside %xxx%
-         # if the pattern in is 
-         if ($_ =~ /%%(.*?)%%/gi)
-         {            
-            print "match = '$1'\n";
-            if ($registeredCallbacks->{$1})
-            {
-               print "callback2=", $registeredCallbacks->{$1};
-               $callback = $registeredCallbacks->{$1};
-               print "result=", &$callback(), "\n";
-            }
-         }
-         
-         #$_ =~ s{%%(.*?)%%}                 
-         #       { exists( $registeredCallbacks->{$1} )
-         #               ? "here"
-         #               : ""
-         #       }gsex;                                 	                        
-      }
-      
-      close(TEMPLATE_FILE);
-   }         
-   
-   return $templateText;
-}
+use HTMLTemplate;
 
 # -------------------------------------------------------------------------------------------------
 
-sub testCallback
-{     
-   return "Hello dude";
-}
+my $sqlClient;
+my $advertisedSaleProfiles;
+my $advertisedRentalProfiles;
+my $suburbProfiles;
+
+# -------------------------------------------------------------------------------------------------
+# callback_noOfAdvertisedSales
+# returns the number of advertied sales in the database
+sub callback_noOfAdvertisedSales
+{
+   my $noOfEntries = 0;
+   if ($advertisedSaleProfiles)
+   {      
+      $noOfEntries = $advertisedSaleProfiles->countEntries();
+   }
+   
+   return $noOfEntries;   
+}  
+
+# -------------------------------------------------------------------------------------------------
+# callback_noOfAdvertisedRentals
+# returns the number of advertied sales in the database
+sub callback_noOfAdvertisedRentals
+{   
+   my $noOfEntries = 0;
+   if ($advertisedRentalProfiles)
+   {   
+      $noOfEntries = $advertisedRentalProfiles->countEntries();
+   }
+   
+   return $noOfEntries;   
+}  
+# -------------------------------------------------------------------------------------------------
+# callback_noOfAdvertisedRentals
+# returns the number of advertied sales in the database
+sub callback_noOfSuburbs
+{      
+   my $noOfEntries = 0;
+   if ($suburbProfiles)
+   {
+      $noOfEntries = $suburbProfiles->countEntries();
+   }
+   
+   return $noOfEntries;   
+}  
+
+# -------------------------------------------------------------------------------------------------
 
 print header();
 
-$registeredCallbacks{"NoOfRentals"} = \&testCallback;
+$sqlClient = SQLClient::new(); 
+$advertisedSaleProfiles = AdvertisedSaleProfiles::new($sqlClient);
+$advertisedRentalProfiles = AdvertisedRentalProfiles::new($sqlClient);
+$suburbProfiles = SuburbProfiles::new($sqlClient);
 
-$html = loadTemplate("StatusTemplate.html", \%registeredCallbacks);      
+if ($sqlClient->connect())
+{	      
 
-print $html;      
+   $registeredCallbacks{"NoOfRentals"} = \&callback_noOfAdvertisedRentals;
+   $registeredCallbacks{"NoOfSales"} = \&callback_noOfAdvertisedSales;
+   $registeredCallbacks{"NoOfSuburbs"} = \&callback_noOfSuburbs;
 
+   $html = loadTemplate("StatusTemplate.html", \%registeredCallbacks);
+
+   print $html;  
+   
+   $sqlClient->disconnect();
+}
+else
+{
+   print "Couldn't connect to database.";
+}
+      
 # -------------------------------------------------------------------------------------------------
 

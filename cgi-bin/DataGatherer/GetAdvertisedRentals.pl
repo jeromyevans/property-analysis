@@ -3,6 +3,9 @@
 # Parses the detailed real-estate rental information to extract fields
 #  Derived from GetAdvertisedSales
 #
+# 16 May 04 - bugfixed algorithm checking search range
+#           - bugfix parseSearchDetails - was looking for wrong keyword to identify page
+
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -338,51 +341,48 @@ sub parseSearchDetails
    
    my %rentalProfiles;
    my $checksum;   
+   
    $printLogger->print("in parseSearchDetails\n");
    
    # --- now extract the property information for this page ---
-   if ($htmlSyntaxTree->containsTextPattern("Suburb Profile"))
-   {                                    
-      # parse the HTML Syntax tree to obtain the advertised rental information
-      %rentalProfiles = extractRentalProfile($documentReader, $htmlSyntaxTree, $url);                  
+                                       
+   # parse the HTML Syntax tree to obtain the advertised rental information
+   %rentalProfiles = extractRentalProfile($documentReader, $htmlSyntaxTree, $url);                  
             
-      # calculate a checksum for the information - the checksum is used to approximately 
-      # identify the uniqueness of the data
-      $checksum = $documentReader->calculateChecksum(\%rentalProfiles);
+   # calculate a checksum for the information - the checksum is used to approximately 
+   # identify the uniqueness of the data
+   $checksum = $documentReader->calculateChecksum(\%rentalProfiles);
          
-      $printLogger->print("   parseSearchDetails: extracted checksum = ", $checksum, ". Checking log...\n");
+   $printLogger->print("   parseSearchDetails: extracted checksum = ", $checksum, ". Checking log...\n");
           
-      if ($sqlClient->connect())
-      {		 	 
-         # check if the log already contains this checksum - if it does, assume the tuple already exists                  
-         if ($logTable->checkIfTupleExists($url, $checksum))
-	      {
-            # this tuple has been previously extracted - it can be dropped
-            # record in the log that it was encountered again
-            $printLogger->print("   parseSearchDetails: record already encountered at that URL.\n");
-	         $logTable->addEncounterRecord($url, $checksum);
-         }
-         else
-         {
-            $printLogger->print("   parseSearchDetails: unique checksum/url - adding new record.\n");
-            # this tuple has never been extracted before - add it to the database
-            if ($advertisedRentalProfiles->addRecord(\%rentalProfiles))
-            {
-               $printLogger->print("   parseSearchDetails: recording log for sourceID ", $rentalProfiles{'SourceID'}, ".\n");
-               # successfully added the tuple - log the checksum
-               $logTable->addRecord($url, $rentalProfiles{'SourceID'}, $checksum);
-            }
-         }
+   if ($sqlClient->connect())
+   {		 	 
+      # check if the log already contains this checksum - if it does, assume the tuple already exists                  
+      if ($logTable->checkIfTupleExists($url, $checksum))
+	   {
+         # this tuple has been previously extracted - it can be dropped
+         # record in the log that it was encountered again
+         $printLogger->print("   parseSearchDetails: record already encountered at that URL.\n");
+	      $logTable->addEncounterRecord($url, $checksum);
       }
       else
       {
-         $printLogger->print("   parseSearchDetails:", $sqlClient->lastErrorMessage(), "\n");
+         $printLogger->print("   parseSearchDetails: unique checksum/url - adding new record.\n");
+         # this tuple has never been extracted before - add it to the database
+         if ($advertisedRentalProfiles->addRecord(\%rentalProfiles))
+         {
+            $printLogger->print("   parseSearchDetails: recording log for sourceID ", $rentalProfiles{'SourceID'}, ".\n");
+            # successfully added the tuple - log the checksum
+            $logTable->addRecord($url, $rentalProfiles{'SourceID'}, $checksum);
+         }
       }
-   }	  
-   else 
-   {
-      $printLogger->print("parseSearchDetails: Identifier pattern not found.\n");
    }
+   else
+   {
+      $printLogger->print("   parseSearchDetails:", $sqlClient->lastErrorMessage(), "\n");
+   }
+   	  
+   
    
    # return an empty list
    return @emptyList;
@@ -453,7 +453,7 @@ sub parseSearchForm
                # if the start letter is defined, use it to constrain the range of 
                # suburbs processed
                # if the first letter if less than the start then reject               
-               if ($firstChar lt $startLetter)
+               if ($_->{'text'} lt $startLetter)
                {
                   # out of range
                   $acceptSuburb = 0;
@@ -462,18 +462,17 @@ sub parseSearchForm
             }
                        
             if ($endLetter)
-            {
-               
+            {               
                # if the end letter is defined, use it to constrain the range of 
                # suburbs processed
                # if the first letter is greater than the end then reject       
-               if ($firstChar gt $endLetter)
+               if ($_->{'text'} gt $endLetter)
                {
                   # out of range
                   $acceptSuburb = 0;
                 #  print "out of end range\n";
                }               
-            }
+            }            
                   
             if ($acceptSuburb)
             {         

@@ -6,6 +6,8 @@
 # Needs to set:
 #   referer to last URL
 #   agent to mozilla
+
+# 16 May 04 - bugfix wasn't using parameters{'url'} as start URL
 #
 # ---CVS---
 # Version: $Revision$
@@ -71,7 +73,7 @@ sub loadConfiguration
 # -------------------------------------------------------------------------------------------------    
  
 #my $startURL = "http://localhost/trial/content-home.htm";
-my $startURL = "http://www.reiwa.com.au/content-home.cfm";
+#my $startURL = "http://www.reiwa.com.au/content-home.cfm";
 
 my $useText = 0;
 $createTables = 0;
@@ -118,10 +120,10 @@ if (($parseSuccess) && ($parameters{'url'}))
    $myParsers{"content-suburb-letter"} = \&parseSuburbNames;
    $myParsers{"content-suburb-detail"} = \&parseSuburbProfilePage;
    #DebugTools::printHash("myParsers", \%myParsers);
-   my $myDocumentReader = DocumentReader::new("getSuburbProfiles", $startURL, $sqlClient, 
+   my $myDocumentReader = DocumentReader::new("getSuburbProfiles", $parameters{'url'}, $sqlClient, 
       \%myTableObjects, \%myParsers, $printLogger);
    
-   $myDocumentReader->setProxy("http://netcache.dsto.defence.gov.au:8080");  
+   #$myDocumentReader->setProxy("http://netcache.dsto.defence.gov.au:8080");  
    $myDocumentReader->run($createTables, $startSession, $continueSession, $dropTables);
 }
 else

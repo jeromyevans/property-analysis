@@ -8,6 +8,11 @@
 # Description:
 #   Module that encapsulate the SuburbProfiles database component
 #
+# History:
+#   18 May 2004 - fixed bug in addRecord that failed to properly quote every
+#     variable (it addded quotes, but didn't call use the sqlclient quote method
+#     to escape quotes contained inside the value.
+#
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -182,8 +187,8 @@ sub addRecord
 	 {
 	    $appendString = $appendString.", ";
 	 }
-	
-	 $appendString = $appendString . "\"".$_."\"";
+		 
+    $appendString = $appendString.$sqlClient->quote($_);
 	 $index++;
       }
       $statementText = $statementText.$appendString . ")";            
@@ -244,5 +249,57 @@ sub dropTable
    return $success;   
 }
 
+# -------------------------------------------------------------------------------------------------
+# countEntries
+# returns the number of advertised sales in the database
+#
+# Purpose:
+#  status information
+#
+# Parameters:
+#  nil
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  Nil
+#
+# Returns:
+#   nil
+sub countEntries
+{   
+   my $this = shift;      
+   my $url = shift;
+   my $checksum = shift;
+   my $statement;
+   my $found = 0;
+   my $noOfEntries = 0;
+   
+   my $sqlClient = $this->{'sqlClient'};
+   my $tableName = $this->{'tableName'};
+   
+   if ($sqlClient)
+   {       
+      $quotedUrl = $sqlClient->quote($url);      
+      my $statementText = "SELECT count(DateEntered) FROM SuburbProfiles";
+   
+      $statement = $sqlClient->prepareStatement($statementText);
+      
+      if ($sqlClient->executeStatement($statement))
+      {
+         # get the array of rows from the table
+         @selectResult = $sqlClient->fetchResults();
+                           
+         foreach (@selectResult)
+         {        
+            # $_ is a reference to a hash
+            $noOfEntries = $$_{'count(DateEntered)'};
+            last;            
+         }                 
+      }                    
+   }   
+   return $noOfEntries;   
+}  
 
 # -------------------------------------------------------------------------------------------------
