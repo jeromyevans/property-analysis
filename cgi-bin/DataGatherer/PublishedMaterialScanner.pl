@@ -23,7 +23,9 @@
 #                    - improved parameter parsing to support generic functions.  Generic configuration file for parameters, checking
 #   and reporting of mandatory paramneters.
 # 
-#   NEED TO IMPORT RENTAL SOURCE
+#   NEED TO DO RETRY ON 500 HTTP ERROR
+#   NEED TO ADD SUPPORT FOR SUBURB PROFILES
+#   NEED TO GET AGENT NAME
 #   NEED TO FIND WAY FOR PARSERS TO BE SPECIFIED THROUGH THE CONFIG FILE (low priority)
 # To do:
 #  - front page for monitoring progress
@@ -50,7 +52,7 @@ use WebsiteParser_Common;
 use WebsiteParser_REIWASales;
 use WebsiteParser_DomainSales;
 use WebsiteParser_REIWARentals;
-
+use WebsiteParser_REIWASuburbs;
   
 # -------------------------------------------------------------------------------------------------    
 my %parameters = undef;
@@ -74,7 +76,7 @@ if (($parseSuccess) && (!($parameters{'command'} =~ /maintenance/i)))
    }            
    
    # initialise the objects for communicating with database tables
-   ($sqlClient, $advertisedSaleProfiles, $advertisedRentalProfiles, $propertyTypes) = initialiseTableObjects();
+   ($sqlClient, $advertisedSaleProfiles, $advertisedRentalProfiles, $propertyTypes, $suburbProfiles) = initialiseTableObjects();
  
    # enable logging to disk by the SQL client
    $sqlClient->enableLogging($parameters{'instanceID'});
@@ -84,7 +86,8 @@ if (($parseSuccess) && (!($parameters{'command'} =~ /maintenance/i)))
    $myTableObjects{'advertisedSaleProfiles'} = $advertisedSaleProfiles;
    $myTableObjects{'advertisedRentalProfiles'} = $advertisedRentalProfiles;
    $myTableObjects{'propertyTypes'} = $propertyTypes;
- 
+   $myTableObjects{'suburbProfiles'} = $suburbProfiles;
+   
    # parsed into the parser functions
    $parameters{'printLogger'} = $printLogger;
    
@@ -116,6 +119,16 @@ if (($parseSuccess) && (!($parameters{'command'} =~ /maintenance/i)))
             $myParsers{"content-home"} = \&parseREIWARentalsHomePage;
             $myParsers{"searchquery"} = \&parseREIWARentalsSearchQuery;
             $myParsers{"searchlist"} = \&parseREIWARentalsSearchList;
+         }
+         else
+         {
+            if ($parameters{'config'} =~ /REIWAsuburbs/i)
+            {
+               $myParsers{"content-home"} = \&parseREIWASuburbsHomePage;
+               $myParsers{"content-suburb.cfm"} = \&parseREIWASuburbLetters;
+               $myParsers{"content-suburb-letter"} = \&parseREIWASuburbNames;
+               $myParsers{"content-suburb-detail"} = \&parseREIWASuburbProfilePage;
+            }
          }
       }
    }
@@ -216,8 +229,9 @@ sub initialiseTableObjects
    my $advertisedRentalProfiles = AdvertisedRentalProfiles::new($sqlClient);
    my $advertisedSaleProfiles = AdvertisedSaleProfiles::new($sqlClient);
    my $propertyTypes = PropertyTypes::new($sqlClient);
-   
-   return ($sqlClient, $advertisedSaleProfiles, $advertisedRentalProfiles, $propertyTypes);
+   my $suburbProfiles = SuburbProfiles::new($sqlClient);
+
+   return ($sqlClient, $advertisedSaleProfiles, $advertisedRentalProfiles, $propertyTypes, $suburbProfiles);
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -226,6 +240,7 @@ sub doMaintenance
 {   
    my $printLogger = shift;   
    my $parametersRef = shift;
+   my $actionOk = 0;
    
    my $sqlClient = SQLClient::new(); 
    my $advertisedSaleProfiles = AdvertisedSaleProfiles::new($sqlClient);
@@ -234,38 +249,54 @@ sub doMaintenance
    my $targetSQLClient = SQLClient::new($$parametersRef{'database'});
    my $targetAdvertisedSaleProfiles = AdvertisedSaleProfiles::new($targetSQLClient);
   
-   if ($$parametersRef{'action'} =~ /validate/i)
+   if ($$parametersRef{'action'} =~ /validatesale/i)
    {
-      $printLogger->print("---Performing Maintenance - Validate---\n");
-      maintenance_ValidateContents($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
+      $printLogger->print("---Performing Maintenance - Validate Sales---\n");
+      maintenance_ValidateSaleContents($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
       $printLogger->print("---Finished Maintenance---\n");
-   }
-   else
-   {
-      if ($$parametersRef{'action'} =~ /duplicates/i)
-      {
-         
-         $printLogger->print("---Performing Maintenance - Delete duplicates ---\n");
-         
-         maintenance_DeleteDuplicates($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
-         
-         $printLogger->print("---Finished Maintenance---\n");
-      }
-      else
-      {
-         $printLogger->print("maintenance: requested action isn't recognised\n");
-         $printLogger->print("   validate   - validate & update the database entries\n");
-         $printLogger->print("   duplicates - delete duplicate database entries\n");
-      }
+      $actionOk = 1;
    }
    
+   if ($$parametersRef{'action'} =~ /validaterental/i)
+   {
+      $printLogger->print("---Performing Maintenance - Validate Rentals---\n");
+      maintenance_ValidateRentalContents($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
+      $printLogger->print("---Finished Maintenance---\n");
+      $actionOk = 1;
+
+   }
+   
+   if ($$parametersRef{'action'} =~ /duplicatesale/i)
+   {
+      $printLogger->print("---Performing Maintenance - Delete duplicate sales ---\n");            
+      maintenance_DeleteSaleDuplicates($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});            
+      $printLogger->print("---Finished Maintenance---\n");
+      $actionOk = 1;
+   }
+   
+   if ($$parametersRef{'action'} =~ /duplicaterental/i)
+   {
+      $printLogger->print("---Performing Maintenance - Delete duplicate rentals ---\n");            
+      maintenance_DeleteRentalDuplicates($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});            
+      $printLogger->print("---Finished Maintenance---\n");
+      $actionOk = 1;
+   }
+   
+   if (!$actionOk)
+   {
+      $printLogger->print("maintenance: requested action isn't recognised\n");
+      $printLogger->print("   validateSale     - validate & update the sales database entries\n");
+      $printLogger->print("   validateRental   - validate & update the rental database entries\n");
+      $printLogger->print("   duplicateSale    - delete duplicate sales database entries\n");
+      $printLogger->print("   duplicateRental  - delete duplicate rental database entries\n");
+   }
 }
 
 # -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
 # iterates through every field of the database and runs the validate function on it
 # updated fields are stored in the target database
-sub maintenance_ValidateContents
+sub maintenance_ValidateSaleContents
 {   
    my $printLogger = shift;   
    my $instanceID = shift;
@@ -332,8 +363,77 @@ sub maintenance_ValidateContents
 }
 
 # -------------------------------------------------------------------------------------------------
+# iterates through every field of the database and runs the validate function on it
+# updated fields are stored in the target database
+sub maintenance_ValidateRentalContents
+{   
+   my $printLogger = shift;   
+   my $instanceID = shift;
+   my $targetDatabase = shift;
+  
+   my $sqlClient = SQLClient::new(); 
+   my $advertisedRentalProfiles = AdvertisedRentalProfiles::new($sqlClient);
+   my $propertyTypes = PropertyTypes::new($sqlClient);
+   my $targetSQLClient = SQLClient::new($targetDatabase);
+   my $targetAdvertisedRentalProfiles = AdvertisedRentalProfiles::new($targetSQLClient);
+  
+   if ($targetDatabase)
+   {
+      # enable logging to disk by the SQL client
+      $sqlClient->enableLogging($instanceID);
+      # enable logging to disk by the SQL client
+      $targetSQLClient->enableLogging("t_".$instanceID);
+      
+      $sqlClient->connect();
+      $targetSQLClient->connect();
+      
+      $printLogger->print("Dropping Target Database table...\n");
+      $targetAdvertisedRentalProfiles->dropTable();
+      
+      $printLogger->print("Creating Target Database emptytable...\n");
+      $targetAdvertisedRentalProfiles->createTable();
+      
+      $printLogger->print("Performing Source database validation...\n");
+      
+      @selectResult = $sqlClient->doSQLSelect("select * from AdvertisedRentalProfiles order by DateEntered");
+      $length = @selectResult;
+      $printLogger->print("   $length records.\n");
+      foreach (@selectResult)
+      {
+         # $_ is a reference to a hash for the row of the table
+         $oldChecksum = $$_{'checksum'};
+         #$printLogger->print($$_{'DateEntered'}, " ", $$_{'SourceName'}, " ", $$_{'SuburbName'}, "(", $_{'SuburbIndex'}, ") oldChecksum=", $$_{'Checksum'});
+   
+         validateProfile($sqlClient, $_);
+         
+         # IMPORTANT: delete the Identifier element of the hash so it's not included in the checksum - otherwise the checksum 
+         # would always differ between attributes
+         delete $$_{'Identifier'};
+         $checksum = DocumentReader::calculateChecksum(undef, $_);
+         #$printLogger->print(" | ", $$_{'SuburbName'}, "(", $$_{'SuburbIndex'}, ") newChecksum=$checksum\n");
+ 
+         $printLogger->print("---", $$_{'DateEntered'}, " ", $$_{'SuburbName'}, "(", $$_{'SuburbIndex'}, ")\n");
+         $$_{'Checksum'} = $checksum;
+         
+         #   $printLogger->print($$_{'Description'}, "\n");
+         #DebugTools::printHash("data", $_);
+         
+         # do an sql insert into the target database
+         $printLogger->print("   Inserting into target database...\n");        
+         $targetSQLClient->doSQLInsert("AdvertisedRentalProfiles", $_);
+      }
+      $targetSQLClient->disconnect();
+      $sqlClient->disconnect();
+   }
+   else
+   {
+       $printLogger->print("   target database name not specified\n");
+   }
+}
 
-sub maintenance_DeleteDuplicates
+# -------------------------------------------------------------------------------------------------
+
+sub maintenance_DeleteSaleDuplicates
 {   
    my $printLogger = shift;   
    my $instanceID = shift;
@@ -372,6 +472,68 @@ sub maintenance_DeleteDuplicates
                print "Duplicate found: ", $$_{'sourceID'}, " (", $$_{'checksum'}, "): identifiers: ", $$lastRecord{'identifier'}, " and ", $$_{'identifier'}, "\n";
                $printLogger->print("   Deleteing from target database...\n");     
                if ($targetSQLClient->prepareStatement("delete from AdvertisedSaleProfiles where identifier = ".$targetSQLClient->quote($$_{'identifier'})))
+               {
+                  $targetSQLClient->executeStatement();
+                  $duplicates++;
+               }
+            }
+         }
+         $lastRecord=$_;
+         $index++;
+      }
+      print "$duplicates deleted.\n";
+
+      $targetSQLClient->disconnect();
+      $sqlClient->disconnect();
+   }
+   else
+   {
+       $printLogger->print("   target database name not specified\n");
+   }
+}
+
+
+# -------------------------------------------------------------------------------------------------
+
+sub maintenance_DeleteRentalDuplicates
+{   
+   my $printLogger = shift;   
+   my $instanceID = shift;
+   my $targetDatabase = shift;
+  
+   my $sqlClient = SQLClient::new(); 
+   my $advertisedRentalProfiles = AdvertisedRentalProfiles::new($sqlClient);
+   my $propertyTypes = PropertyTypes::new($sqlClient);
+   my $targetSQLClient = SQLClient::new($targetDatabase);
+   my $targetAdvertisedRentalProfiles = AdvertisedRentalProfiles::new($targetSQLClient);
+  
+   if ($targetDatabase)
+   {
+      # enable logging to disk by the SQL client
+      $sqlClient->enableLogging($instanceID);
+      # enable logging to disk by the SQL client
+      $targetSQLClient->enableLogging("dups_".$instanceID);
+      
+      $sqlClient->connect();
+      $targetSQLClient->connect();
+      
+      $printLogger->print("Deleting duplicate entries...\n");
+      @selectResult = $targetSQLClient->doSQLSelect("select identifier, sourceID, checksum from AdvertisedRentalProfiles order by sourceID, checksum");
+      $length = @selectResult;
+      $index = 0;
+      print "$length total records...\n";
+      $duplicates = 0;
+      foreach (@selectResult)
+      {
+         if ($index > 0)
+         {
+            print "$index...", $$_{'sourceID'}, "\n";
+            # check if this record exactly matches the last one
+            if (($$_{'sourceID'} eq $$lastRecord{'sourceID'}) && ($$_{'checksum'} eq $$lastRecord{'checksum'}))
+            {
+               print "Duplicate found: ", $$_{'sourceID'}, " (", $$_{'checksum'}, "): identifiers: ", $$lastRecord{'identifier'}, " and ", $$_{'identifier'}, "\n";
+               $printLogger->print("   Deleteing from target database...\n");     
+               if ($targetSQLClient->prepareStatement("delete from AdvertisedRentalProfiles where identifier = ".$targetSQLClient->quote($$_{'identifier'})))
                {
                   $targetSQLClient->executeStatement();
                   $duplicates++;

@@ -234,6 +234,15 @@ sub validateProfile
        delete $$profileRef{'AdvertisedPriceUpper'};
    }
    
+   # validate advertised weekly rent
+   if ((($$profileRef{'AdvertisedWeeklyRent'} > 0)) || (!defined $$profileRef{'AdvertisedWeeklyRent'}))
+   {
+   }
+   else
+   {
+       delete $$profileRef{'AdvertisedWeeklyRent'};
+   }
+   
    # ---
    # attempt to remove phone numbers and personal details from the description
    #  - a  phone number is 8 to 10 digits.  It may contain zero or more whitespaces between each digit, but nothing else

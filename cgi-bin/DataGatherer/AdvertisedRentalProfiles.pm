@@ -98,10 +98,11 @@ my $SQL_CREATE_TABLE_STATEMENT = "CREATE TABLE IF NOT EXISTS AdvertisedRentalPro
     "InstanceID TEXT, ".
     "TransactionNo INTEGER, ".
     "Identifier INTEGER ZEROFILL PRIMARY KEY AUTO_INCREMENT, ".    
-    "SuburbIdentifier INTEGER, ".
+    "SuburbIndex INTEGER, ".
     "SuburbName TEXT, ".
     "State TEXT, ".
     "Type VARCHAR(10), ".
+    "TypeIndex INTEGER, ".
     "Bedrooms INTEGER, ".
     "Bathrooms INTEGER, ".        
     "Land INTEGER, ".

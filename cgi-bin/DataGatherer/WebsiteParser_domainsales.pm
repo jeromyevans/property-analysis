@@ -12,8 +12,6 @@
 # Date: $Date$
 # $Id$
 #
-##################NEED TO HANDLE MULTIPLE CHECKBOXES WITH SAME NAME IN PARAMETERS
-##################NEED TO ENSURE NAMELESS SUBMIT BUTTONS ARE NOT PROVIDED IN PARAMETERS
 
 use PrintLogger;
 use CGI qw(:standard);
@@ -84,12 +82,13 @@ sub extractDomainSaleProfile
    
    # replace + with space character
    $suburb =~ s/\+/ /g;
-   
+  
    $htmlSyntaxTree->resetSearchConstraints();
-   $htmlSyntaxTree->setSearchStartConstraintByText("E-mail me similar properties");
-   $htmlSyntaxTree->setSearchEndConstraintByText("Agent Details"); 
+   $htmlSyntaxTree->setSearchStartConstraintByTag("h2");
+   $htmlSyntaxTree->setSearchEndConstraintByText("Latest Auction"); 
                  
-   $addressString = $htmlSyntaxTree->getNextText();    # always set, but may not contain the address (just the suburb/town)   
+   $addressString = $htmlSyntaxTree->getNextText();    # always set, but may not contain the address (just the suburb/town)
+   
    # the last word(s) are ALWAYS the suburb name.  As this is known, drop it to leave just street & street number
    # notes on the regular expression:
    #  \b is used to match only the whole word
@@ -145,6 +144,8 @@ sub extractDomainSaleProfile
    $street = $documentReader->trimWhitespace($street);
    
    $priceString = $htmlSyntaxTree->getNextTextAfterPattern("Price:");
+   $priceString = $htmlSyntaxTree->getNextTextAfterPattern("Price:");
+
    # price string is sometimes lower followed by a dash then price upper
    ($priceLowerString, $priceUpperString) = split(/-/, $priceString, 2);
    #print "priceLowerString = $priceLowerString\n";
@@ -152,14 +153,16 @@ sub extractDomainSaleProfile
    $priceLower = $documentReader->strictNumber($documentReader->parseNumberSomewhereInString($priceLowerString));
    $priceUpper = $documentReader->strictNumber($documentReader->parseNumberSomewhereInString($priceUpperString));
    
-   $infoString = $documentReader->trimWhitespace($htmlSyntaxTree->getNextTextAfterPattern("Property Details"));  # always set (contains at least TYPE)
+   $sourceID = $documentReader->trimWhitespace($htmlSyntaxTree->getNextTextAfterPattern("Property ID:"));
    
+   $type = $documentReader->trimWhitespace($htmlSyntaxTree->getNextText());  # always set (contains at least TYPE)
+   $type =~ s/\://gi;   
+   
+   $infoString = $documentReader->trimWhitespace($htmlSyntaxTree->getNextText());
    $bedroomsString = undef;
    $bathroomsString = undef;
    
-   # type is the first word
    @wordList = split(/ /, $infoString);
-   $type = $documentReader->trimWhitespace($wordList[0]);
    # 'x' bedrooms
    # 'y' bathrooms
    $index = 0;
@@ -196,8 +199,7 @@ sub extractDomainSaleProfile
    $landArea = $htmlSyntaxTree->getNextTextAfterPattern("area:");  # optional
    $land = $documentReader->strictNumber($documentReader->parseNumber($landArea));
    
-   $title = $htmlSyntaxTree->getNextTextAfterPattern("Description");
-   $description = $documentReader->trimWhitespace($htmlSyntaxTree->getNextText());
+   $description = $documentReader->trimWhitespace($htmlSyntaxTree->getNextTextAfterPattern("Description"));
    
    $htmlSyntaxTree->resetSearchConstraints();
    if (($htmlSyntaxTree->setSearchStartConstraintByText("Features")) && ($htmlSyntaxTree->setSearchEndConstraintByText("Description")))
@@ -216,11 +218,7 @@ sub extractDomainSaleProfile
       $features = $documentReader->trimWhitespace($features);
       
    }
-   
-   # remove non-numeric characters from the string occuring before the question mark to get source ID
-   ($crud, $sourceID) = split(/\?/, $url, 2);            
-   $sourceID =~ s/[^0-9]//gi;
-              
+                
    $saleProfile{'SourceID'} = $sourceID;      
    
    if ($suburb) 

@@ -22,6 +22,7 @@
 #   of the application running)
 #  2 Oct 2004 - disabled stripping out the parameters from referer for privacy - some servers depended on it
 #  7 Oct 2004 - changed post to accept an encoded content string instead of a hash for the content
+#  17 Oct 2004 - added retransmissions for 500 response code (internal server error)
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -353,15 +354,42 @@ sub get()
    #print "---\n";
    $this->{'requestRef'} = $request;      # update instance variable   
    $this->{'absoluteURL'} = $absoluteURL;  
-       
-   # issue the request...get a response
-   $response = $userAgent->request($request);
-   $this->{'responseRef'} = $response;    # update instance variable
    
-   if ($LOG_TRANSACTIONS)
+   # prepare to run in a loop if request fails with certain error types
+   $requestAttempts = 0;
+   $retryRequest = 1;
+   while ($retryRequest)
    {
-      $this->saveTransactionLog($transactionNo);
-   }   
+      $retryRequest = 0;
+      if ($requestAttempts > 0)
+      {
+         print "   last HTTP status code $statusCode. Retrying...\n";
+      }
+      # issue the request...get a response
+      $response = $userAgent->request($request);
+      $this->{'responseRef'} = $response;    # update instance variable
+      
+      if ($LOG_TRANSACTIONS)
+      {
+         $this->saveTransactionLog($transactionNo);
+      }
+      
+      if ($response->is_error())
+      {         
+         $statusCode = $response->code();
+         if ($statusCode == 500)
+         {
+            # internal server error
+            $requestAttempts++;
+            if ($requestAttempts < 6)
+            {
+                # might be a temporary request failure - sleep a little bit and try again
+               $retryRequest = 1;
+               sleep 5;
+            }
+         }
+      }
+   }
    
    #23 May 2004 - get the updated cookie jar
    $cookieJar = $userAgent->cookie_jar();
@@ -456,9 +484,44 @@ sub post()
    $this->{'requestRef'} = $request;      # update instance variable      
    
  
-   # issue the request...get a response
-   $response = $userAgent->request($request);
-   $this->{'responseRef'} = $response;    # update instance variable
+   # prepare to run in a loop if request fails with certain error types
+   $requestAttempts = 0;
+   $retryRequest = 1;
+   while ($retryRequest)
+   {
+      $retryRequest = 0;
+      
+      if ($requestAttempts > 0)
+      {
+         print "   last HTTP status code $statusCode. Retrying...\n";
+      }
+      
+      # issue the request...get a response
+      $response = $userAgent->request($request);
+      $this->{'responseRef'} = $response;    # update instance variable
+      
+      if ($LOG_TRANSACTIONS)
+      {
+         $this->saveTransactionLog($transactionNo);
+      }
+      
+      if ($response->is_error())
+      {         
+         $statusCode = $response->code();
+         if ($statusCode == 500)
+         {
+            # internal server error
+         
+            $requestAttempts++;
+            if ($requestAttempts < 6)
+            {
+                # might be a temporary request failure - sleep a little bit and try again
+               $retryRequest = 1;
+               sleep 5;
+            }
+         }
+      }
+   }
    
    if ($LOG_TRANSACTIONS)     
    {

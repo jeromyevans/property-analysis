@@ -64,7 +64,6 @@ sub extractREIWARentalProfile
    # --- set start constraint to the 3rd table (table 2) on the page - this is table
    # --- across the top that MAY contain a title and description            
    $htmlSyntaxTree->setSearchConstraintsByTable(2);
-   #$htmlSyntaxTree->setSearchStartConstraintByTag("tr");  # next row of table
    $htmlSyntaxTree->setSearchEndConstraintByTag("td"); # until the next table
                     
    $IDSuburbPrice = $htmlSyntaxTree->getNextText();    # always set
@@ -72,15 +71,13 @@ sub extractREIWARentalProfile
    ($sourceID, $suburb, $priceLower, $priceHigher) = split /\-/, $IDSuburbPrice;
      
    $gumph = $htmlSyntaxTree->getNextText();            # sometimes undef
-                  
    # ---   
-   $htmlSyntaxTree->setSearchStartConstraintByTag("tr");  # next row of table
+   #$htmlSyntaxTree->setSearchStartConstraintByTag("tr");  # next row of table
    $htmlSyntaxTree->setSearchStartConstraintByTag("tr");  # next row of table   
    $htmlSyntaxTree->setSearchEndConstraintByTag("table");    
-  
-   $title = $htmlSyntaxTree->getNextText();            # sometimes undef        
+   $title = $htmlSyntaxTree->getNextText();            # sometimes undef
    $description = $htmlSyntaxTree->getNextText();      # sometimes undef        
-   
+
    # --- set start constraint to the 4th table on the page - this is table
    # --- to the right of the image that contains parameters for the property   
    $htmlSyntaxTree->setSearchConstraintsByTable(3);
@@ -243,8 +240,8 @@ sub parseREIWARentalsSearchDetails
    # parse the HTML Syntax tree to obtain the advertised rental information
    %rentalProfiles = extractREIWARentalProfile($documentReader, $htmlSyntaxTree, $url);                  
             
-   ######## NOTE: need to validate rental profile ##############         
-            
+   validateProfile($sqlClient, \%rentalProfiles);
+print "ValidatedDesc: ", $rentalProfiles{'description'}, "\n";         
    # calculate a checksum for the information - the checksum is used to approximately 
    # identify the uniqueness of the data
    $checksum = $documentReader->calculateChecksum(\%rentalProfiles);
@@ -378,11 +375,11 @@ sub parseREIWARentalsSearchForm
             if ($acceptSuburb)
             {         
                #print "accepted\n";               
-               #my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url);
+               my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url);
             
                # add this new transaction to the list to return for processing
-#               $transactionList[$noOfTransactions] = $newHTTPTransaction;
-#               $noOfTransactions++;
+               $transactionList[$noOfTransactions] = $newHTTPTransaction;
+               $noOfTransactions++;
             }
          }
       }
