@@ -71,7 +71,7 @@ sub connect
 {
    my $this = shift;
    
-   my $dbiHandle = DBI->connect("DBI:mysql:test", undef, undef);
+   my $dbiHandle = DBI->connect("DBI:mysql:PropertyData", "propagent", "propagent9");
    
    if ($dbiHandle)
    {

@@ -48,9 +48,11 @@ sub new
    my $logToStdout = shift;
    my $logToCGI = shift;
    
+   mkdir "logs", 0755;    
+   
    my $printLogger = { 
       sessionName => $sessionName,
-      logFileName => $logFileName,   
+      logFileName => "logs/".$logFileName,   
       logToFile => $logToFile,
       logToStdout => $logToStdout,
       logToCGI => $logToCGI

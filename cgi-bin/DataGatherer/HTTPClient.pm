@@ -532,8 +532,9 @@ sub saveTransactionLog()
   ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
    $year += 1900;
    $mon++;
-          	      
-   open(SESSION_FILE, ">>$sessionFileName") || print "Can't open file: $!"; 
+   
+   mkdir "logs", 0755;       	      
+   open(SESSION_FILE, ">>logs/$sessionFileName") || print "Can't open file: $!"; 
            
    print SESSION_FILE "\n\n\n<!-------------- TRANSACTION START ------------------>\n";           
    print SESSION_FILE "\n<transaction name='$sessionName' year='$year' mon='$mon' mday='$mday' hour='$hour' min='$min' sec='$sec'>\n";
