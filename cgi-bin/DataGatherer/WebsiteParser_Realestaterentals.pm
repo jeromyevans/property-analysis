@@ -10,6 +10,12 @@
 #
 # History:
 # 22 January 2005  - added support for the StatusTable reporting of progress for the thread
+# 23 January 2004  - added support for the SessionProgressTable reporting of progress of the thread
+#                  - added support for the SessionProgressTable reporting of progress of the thread
+#                  - added check against SessionProgressTable to reject suburbs that appear 'completed' already
+#  in the table.  Should prevent procesing of suburbs more than once if the server returns the same suburb under
+#  multiple searches.  Note: completed indicates the propertylist has been parsed, not necessarily all the details.
+#
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -29,6 +35,7 @@ use AgentStatusServer;
 use PropertyTypes;
 use WebsiteParser_Common;
 use StatusTable;
+use SessionProgressTable;   # 23Jan05
 
 @ISA = qw(Exporter);
 
@@ -555,12 +562,16 @@ sub parseRealEstateRentalsSearchResults
    my $firstRun = 1;
    my $statusTable = $documentReader->getStatusTable();
    my $recordsEncountered = 0;
+   my $sessionProgressTable = $documentReader->getSessionProgressTable();   # 23Jan05
+   
 
    # --- now extract the property information for this page ---
    $printLogger->print("inParseSearchResults ($parentLabel):\n");
    @splitLabel = split /\./, $parentLabel;
    $suburbName = $splitLabel[$#splitLabel];  # extract the suburb name from the parent label
 
+   $sessionProgressTable->reportRegionOrSuburbChange($threadID, undef, $suburbName);    # 23Jan05 
+   
    #$htmlSyntaxTree->printText();
    if ($htmlSyntaxTree->containsTextPattern("Displaying"))
    {         
@@ -663,7 +674,7 @@ sub parseRealEstateRentalsSearchResults
                   $advertisedRentalProfiles->addEncounterRecord($sourceName, $sourceID, undef);
                }
             }
-            
+
             $state = $SEEKING_NEXT_RESULT;
             $parsedThisLine = 1;
          }
@@ -682,10 +693,13 @@ sub parseRealEstateRentalsSearchResults
          
          #print "  END: state=$state: '$thisText' parsed=$parsedThisLine\n";
          $recordsEncountered++;  # count records seen
+         
+         # 23Jan05:save that this suburb has had some progress against it
+        $sessionProgressTable->reportProgressAgainstSuburb($threadID, 1);
 
       }      
       $statusTable->addToRecordsEncountered($threadID, $recordsEncountered, $url);
-      
+
       # now get the anchor for the NEXT button if it's defined 
       
       $htmlSyntaxTree->resetSearchConstraints();
@@ -705,6 +719,8 @@ sub parseRealEstateRentalsSearchResults
       {            
          $printLogger->print("   parseSearchResults: list has no 'next' button anchor...\n");
          @anchorsList = @urlList;
+         # 23Jan05:save that this suburb has (almost) completed - just need to process the details
+         $sessionProgressTable->reportSuburbCompletion($threadID);
       }                      
      
       $length = @anchorsList;         
@@ -721,7 +737,10 @@ sub parseRealEstateRentalsSearchResults
       return @anchorsList;
    }
    else
-   {      
+   {  
+      # 23Jan05:save that this suburb has (almost) completed - just need to process the details
+      $sessionProgressTable->reportSuburbCompletion($threadID);
+      
       $printLogger->print("   parseSearchResults: returning empty anchor list.\n");
       return @emptyList;
    }   
@@ -769,6 +788,7 @@ sub parseRealEstateRentalsSearchForm
    my $startLetter = $documentReader->getGlobalParameter('startrange');
    my $endLetter =  $documentReader->getGlobalParameter('endrange');
    my $printLogger = $documentReader->getGlobalParameter('printLogger');
+   my $sessionProgressTable = $documentReader->getSessionProgressTable();   # 23Jan05
    
    my %subAreaHash;
       
@@ -790,60 +810,54 @@ sub parseRealEstateRentalsSearchForm
       # parse through all those in the perth metropolitan area
       if ($optionsRef)
       {         
+         # recover the state, region, suburb combination from the recovery file for this thread
+
+         $sessionProgressTable->prepareSuburbStateMachine($threadID);     # 23Jan05
+         
          foreach (@$optionsRef)
          {            
             $acceptSuburb = 0;
 
-            if ($_->{'text'} =~ /\*\*\*/i)
+            # check if the last suburb has been encountered - if it has, then start processing from this point
+            $useThisSuburb = $sessionProgressTable->isSuburbAcceptable($_->{'text'});  # 23Jan05
+            
+            if ($useThisSuburb)
             {
-                # ignore '*** show all suburbs ***' option
-            }
-            else
-            {
-               $htmlForm->setInputValue('u', DocumentReader->trimWhitespace($_->{'text'}));
-
-               #print $_->{'text'}, ", ";
-               
-
-               #($firstChar, $restOfString) = split(//, $_->{'text'});
-               #print $_->{'text'}, " FC=$firstChar ($startLetter, $endLetter) ";
-               $acceptSuburb = 1;
-               if ($startLetter)
-               {                              
-                  # if the start letter is defined, use it to constrain the range of 
-                  # suburbs processed
-                  # if the first letter if less than the start then reject               
-                  if ($_->{'text'} lt $startLetter)
-                  {
-                     # out of range
-                     $acceptSuburb = 0;
-                   #  print "out of start range\n";
-                  }                              
+               if ($_->{'text'} =~ /\*\*\*/i)
+               {
+                   # ignore '*** show all suburbs ***' option
                }
-                          
-               if ($endLetter)
-               {               
-                  # if the end letter is defined, use it to constrain the range of 
-                  # suburbs processed
-                  # if the first letter is greater than the end then reject       
-                  if ($_->{'text'} gt $endLetter)
-                  {
-                     # out of range
-                     $acceptSuburb = 0;
-                   #  print "out of end range\n";
-                  }               
+               else
+               {
+                  $htmlForm->setInputValue('u', DocumentReader->trimWhitespace($_->{'text'}));
+   
+                  #print $_->{'text'}, ", ";
+                  
+                  # determine if the suburbname is in the specific letter constraint
+                  $acceptSuburb = isSuburbNameInRange($_->{'text'}, $startLetter, $endLetter);  # 23Jan05
                }
             }
                      
             if ($acceptSuburb)
             {         
-               #print "accepted\n";               
-               my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url, $parentLabel.".".DocumentReader->trimWhitespace($_->{'text'}));
-               #print $htmlForm->getEscapedParameters(), "\n";
-            
-               # add this new transaction to the list to return for processing
-               $transactionList[$noOfTransactions] = $newHTTPTransaction;
-               $noOfTransactions++;
+               
+               # 23 Jan 05 - another check - see if the suburb has already been 'completed' in this thread
+               # if it has been, then don't do it again (avoids special case where servers may return
+               # the same suburb for multiple search variations)
+               if (!$sessionProgressTable->hasSuburbBeenProcessed($threadID, $_->{'text'}))
+               {  
+                  #print "accepted\n";               
+                  my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url, $parentLabel.".".DocumentReader->trimWhitespace($_->{'text'}));
+                  #print $htmlForm->getEscapedParameters(), "\n";
+               
+                  # add this new transaction to the list to return for processing
+                  $transactionList[$noOfTransactions] = $newHTTPTransaction;
+                  $noOfTransactions++;
+               }   
+               else
+               {
+                  $printLogger->print("   parseSearchForm:suburb ", $_->{'text'}, " previously processed in this thread.  Skipping...\n");
+               }
             }
          }
          

@@ -10,6 +10,11 @@
 # History:
 #  5 December 2004 - adapted to use common AdvertisedPropertyProfiles instead of separate rentals and sales tables
 # 22 January 2005  - added support for the StatusTable reporting of progress for the thread
+# 23 January 2005  - added support for the SessionProgressTable reporting of progress of the thread
+#                  - added check against SessionProgressTable to reject suburbs that appear 'completed' already
+#  in the table.  Should prevent procesing of suburbs more than once if the server returns the same suburb under
+#  multiple searches.  Note: completed indicates the propertylist has been parsed, not necessarily all the details.
+#
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -29,6 +34,7 @@ use AgentStatusServer;
 use PropertyTypes;
 use WebsiteParser_Common;
 use StatusTable;
+use SessionProgressTable;
 
 @ISA = qw(Exporter);
 
@@ -277,7 +283,7 @@ sub parseREIWASalesSearchDetails
             # record that it was encountered again
             $printLogger->print("   parseSearchDetails: identical record already encountered at $sourceID.\n");
             $advertisedSaleProfiles->addEncounterRecord($sourceName, $saleProfiles{'SourceID'}, $checksum);
-            $statusTable->addToRecordsParsed($threadID, 1, 0, $url);    
+            $statusTable->addToRecordsParsed($threadID, 1, 0, $url);
          }
          else
          {
@@ -285,7 +291,7 @@ sub parseREIWASalesSearchDetails
             # this tuple has never been extracted before - add it to the database
             $identifier = $advertisedSaleProfiles->addRecord($sourceName, \%saleProfiles, $url, $checksum, $instanceID, $transactionNo);
             $statusTable->addToRecordsParsed($threadID, 1, 1, $url);    
-
+ 
             if ($identifier >= 0)
             {
                # 27Nov04: save the HTML file entry that created this record
@@ -307,6 +313,238 @@ sub parseREIWASalesSearchDetails
    
    # return an empty list
    return @emptyList;
+}
+
+
+# -------------------------------------------------------------------------------------------------
+# parseREIWASalesSearchList
+# parses the htmlsyntaxtree that contains the list of homes generated in response 
+# to a query
+#
+# Purpose:
+#  construction of the repositories
+#
+# Parameters:
+#  DocumentReader
+#  HTMLSyntaxTree to use
+#  String URL
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  database
+#
+# Returns:
+#  a list of HTTP transactions or URL's.
+#    
+sub parseREIWASalesSearchList
+
+{	
+   my $documentReader = shift;
+   my $htmlSyntaxTree = shift;
+   my $url = shift;    
+   my $instanceID = shift;
+   my $transactionNo = shift;
+   my $threadID = shift;
+   my $parentLabel = shift;
+   
+   my $printLogger = $documentReader->getGlobalParameter('printLogger');
+   my $sourceName =  $documentReader->getGlobalParameter('source');
+   
+   my @urlList;        
+   my $firstRun = 1;
+   my $statusTable = $documentReader->getStatusTable();
+   my $sessionProgressTable = $documentReader->getSessionProgressTable();   # 23Jan05
+   my $recordsEncountered = 0;
+
+   # --- now extract the property information for this page ---
+   $printLogger->print("inParseSearchList ($parentLabel):\n");
+   #$htmlSyntaxTree->printText();
+   
+   # note it's not necessary to report that the suburb is being processed in this function - it
+   # was already called in the parseQuery function
+   
+   if ($htmlSyntaxTree->containsTextPattern("matching listings"))
+   {         
+      # get all anchors containing any text
+      if ($housesListRef = $htmlSyntaxTree->getAnchorsAndTextContainingPattern("\#"))
+      {  
+         
+         # loop through all the entries in the log cache
+         $printLogger->print("   parseSearchList: checking if unique ID exists...\n");
+         if ($sqlClient->connect())
+         {
+            foreach (@$housesListRef)
+            {
+               $sourceID = $$_{'string'};
+               $sourceURL = $$_{'href'};
+              
+               if ($firstRun)
+               {
+                  $htmlSyntaxTree->setSearchStartConstraintByText($sourceID);
+                  $firstRun = 0;
+               }
+              
+               # get the price range - the price is obtained to see if it's changed from the cache'd value.  If the price has
+               # changed then the full record is downloaded again.              
+               $priceRangeString = $htmlSyntaxTree->getNextTextAfterPattern($sourceID);
+               ($priceLowerString, $priceUpperString) = split /\-/, $priceRangeString;
+               $priceLower = $documentReader->strictNumber($documentReader->parseNumber($priceLowerString, 1));
+               $priceUpper = $documentReader->strictNumber($documentReader->parseNumber($priceUpperString, 1));
+               if ($priceLower)
+               {
+                  $printLogger->print("   printSearchList: checking if price changed (now '$priceLower')\n");
+               }
+               # check if the cache already contains this unique id
+               # $_ is a reference to a hash
+               if (!$advertisedSaleProfiles->checkIfTupleExists($sourceName, $sourceID, undef, $priceLower, $priceHigher))                              
+               {   
+                  $printLogger->print("   parseSearchList: adding anchor id ", $sourceID, "...\n");
+                  #$printLogger->print("   parseSearchList: url=", $sourceURL, "\n");          
+                   my $httpTransaction = HTTPTransaction::new($sourceURL, $url, $parentLabel.".".$sourceID);                  
+             
+                   push @urlList, $httpTransaction;
+            #      push @urlList, $sourceURL;
+               }
+               else
+               {
+                  $printLogger->print("   parseSearchList: id ", $sourceID , " in database. Updating last encountered field...\n");
+                  $advertisedSaleProfiles->addEncounterRecord($sourceName, $sourceID, undef);
+               }
+               $recordsEncountered++;  # count records seen
+               # 23Jan05:save that this suburb has had some progress against it
+               $sessionProgressTable->reportProgressAgainstSuburb($threadID, 1);
+            }      
+            $statusTable->addToRecordsEncountered($threadID, $recordsEncountered, $url);
+            
+         }
+         else
+         {
+            $printLogger->print("   parseSearchList:", $sqlClient->lastErrorMessage(), "\n");
+         }         
+         
+         # now get the anchor for the NEXT button if it's defined 
+         # this is an image with source 'right_btn'
+         $nextButtonListRef = $htmlSyntaxTree->getAnchorsContainingImageSrc("right_btn");
+                  
+         if ($nextButtonListRef)
+         {            
+            $printLogger->print("   parseSearchList: list includes a 'next' button anchor...\n");
+            $httpTransaction = HTTPTransaction::new($$nextButtonListRef[0], $url, $parentLabel);                  
+
+            @anchorsList = (@urlList, $httpTransaction);
+         }
+         else
+         {            
+            $printLogger->print("   parseSearchList: list has no 'next' button anchor...\n");
+            @anchorsList = @urlList;
+            # 23Jan05:save that this suburb has (almost) completed - just need to process the details
+            $sessionProgressTable->reportSuburbCompletion($threadID);
+         }                      
+        
+         $length = @anchorsList;         
+         $printLogger->print("   parseSearchList: following $length anchors...\n");         
+      }
+      else
+      {
+         $printLogger->print("   parseSearchList: no anchors found in list.\n");   
+      }
+   }	  
+   else 
+   {
+      $printLogger->print("   parseSearchList: pattern not found\n");
+   }
+   
+   # return the list or anchors or empty list   
+   if ($housesListRef)
+   {      
+      return @anchorsList;
+   }
+   else
+   {      
+      # 23Jan05:save that this suburb has (almost) completed - just need to process the details
+      $sessionProgressTable->reportSuburbCompletion($threadID);
+         
+      $printLogger->print("   parseSearchList: returning empty anchor list.\n");
+      return @emptyList;
+   }   
+     
+}
+
+# -------------------------------------------------------------------------------------------------
+# parseREIWASalesSearchQuery
+# parses the htmlsyntaxtree generated in response to a search
+#
+# Purpose:
+#  construction of the repositories
+#
+# Parameters:
+#  DocumentReader
+#  HTMLSyntaxTree to use
+#  String URL
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  nil
+#
+# Returns:
+#  a list of HTTP transactions or URL's.
+#    
+# http://public.reiwa.com.au/misc/searchQuery.cfm???
+sub parseREIWASalesSearchQuery
+
+{	
+   my $documentReader = shift;
+   my $htmlSyntaxTree = shift;
+   my $url = shift;
+   my $instanceID = shift;
+   my $transactionNo = shift;
+   my $threadID = shift;
+   my $parentLabel = shift;
+   
+   my $htmlForm;
+   my $actionURL;
+   my $httpTransaction;
+   my $printLogger = $documentReader->getGlobalParameter('printLogger');
+   my $sessionProgressTable = $documentReader->getSessionProgressTable();   # 23Jan05
+      
+   $printLogger->print("in parseSearchQuery ($parentLabel)\n");
+
+   # report that a suburb has started being processed...
+   $suburbName = extractOnlyParentName($parentLabel);
+   $sessionProgressTable->reportRegionOrSuburbChange($threadID, undef, $suburbName);
+   
+   # if this page contains a form to select whether to proceed or not...
+   $htmlForm = $htmlSyntaxTree->getHTMLForm();
+   if ($htmlForm)
+   {       
+      #$actionURL = new URI::URL($htmlForm->getAction(), $url)->abs();
+           
+      #%postParameters = $htmlForm->getPostParameters();
+      $printLogger->print("   parseSearchQueury: returning POST transaction for continue form.\n");
+      #$httpTransaction = HTTPTransaction::new($actionURL, 'POST', \%postParameters, $url);
+      $httpTransaction = HTTPTransaction::new($htmlForm, $url, $parentLabel);            
+   }	  
+   else 
+   {
+      $printLogger->print("   parseSearchQuery: continue form not found\n");
+      
+      # there are no records in this suburb - it's already completed
+      $sessionProgressTable->reportSuburbCompletion($threadID);
+   }
+   
+   if ($httpTransaction)
+   {
+      return ($httpTransaction);
+   }
+   else
+   {      
+      $printLogger->print("   parseSearchQuery: returning empty list\n");
+      return @emptyList;
+   }   
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -351,7 +589,8 @@ sub parseREIWASalesSearchForm
    my $startLetter = $documentReader->getGlobalParameter('startrange');
    my $endLetter =  $documentReader->getGlobalParameter('endrange');
    my $printLogger = $documentReader->getGlobalParameter('printLogger');
-   
+   my $sessionProgressTable = $documentReader->getSessionProgressTable();   # 23Jan05
+
    my @metropolitanAreas = ('Armadale', 'Bassendean', 'Bayswater', 'Belmont', 'Cambridge', 'Canning', 'Chittering', 'Claremont', 'Cockburn', 'Cottesloe', 'East Fremantle', 'Fremantle', 'Gosnells', 'Joondalup', 'Kalamunda', 'Kwinana', 'Melville', 'Mosman Park', 'Mundaring', 'Nedlands', 'Peppermint Grove', 'Perth', 'Rockingham', 'Serpentine-Jarrahdale', 'South Perth', 'Stirling', 'Subiaco', 'Swan', 'Toodyah', 'Victoria Park', 'Vincent', 'Wanneroo');  
    my %subAreaHash;
       
@@ -373,55 +612,45 @@ sub parseREIWASalesSearchForm
       # parse through all those in the perth metropolitan area
       if ($optionsRef)
       {         
+         $sessionProgressTable->prepareSuburbStateMachine($threadID);     # 23Jan05
+         
          foreach (@$optionsRef)
          {
-            # create a duplicate of the default post parameters
-            #my %newPostParameters = %defaultPostParameters;
+            $acceptSuburb = 0;
+            # check if the last suburb has been encountered - if it has, then start processing from this point
+            $useThisSuburb = $sessionProgressTable->isSuburbAcceptable($_->{'text'});  # 23Jan05
             
-            # and set the value to this option in the selection            
+            if ($useThisSuburb)
+            {
             
-            #$newPostParameters{'subdivision'} = $_->{'value'};
-            $htmlForm->setInputValue('subdivision', $_->{'value'});
- #           print $_->{'text'}, ", ";
-            #($firstChar, $restOfString) = split(//, $_->{'text'});
-            #print $_->{'text'}, " FC=$firstChar ($startLetter, $endLetter) ";
-            $acceptSuburb = 1;
-            if ($startLetter)
-            {                              
-               # if the start letter is defined, use it to constrain the range of 
-               # suburbs processed
-               # if the first letter if less than the start then reject               
-               if ($_->{'text'} lt $startLetter)
-               {
-                  # out of range
-                  $acceptSuburb = 0;
-                #  print "out of start range\n";
-               }                              
-            }
-                       
-            if ($endLetter)
-            {               
-               # if the end letter is defined, use it to constrain the range of 
-               # suburbs processed
-               # if the first letter is greater than the end then reject       
-               if ($_->{'text'} gt $endLetter)
-               {
-                  # out of range
-                  $acceptSuburb = 0;
-                #  print "out of end range\n";
-               }               
+                # set the value to this option in the selection                        
+               $htmlForm->setInputValue('subdivision', $_->{'value'});
+               
+               # determine if the suburbname is in the specific letter constraint
+               $acceptSuburb = isSuburbNameInRange($_->{'text'}, $startLetter, $endLetter);  # 23Jan05
+                              
             }
                   
             if ($acceptSuburb)
             {         
-               #print "accepted\n";               
-               #my $newHTTPTransaction = HTTPTransaction::new($actionURL, 'POST', \%newPostParameters, $url);
-               my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url, $parentLabel.".".$_->{'text'});
-               #print $htmlForm->getEscapedParameters(), "\n";
-            
-               # add this new transaction to the list to return for processing
-               $transactionList[$noOfTransactions] = $newHTTPTransaction;
-               $noOfTransactions++;
+               
+               # 23 Jan 05 - another check - see if the suburb has already been 'completed' in this thread
+               # if it has been, then don't do it again (avoids special case where servers may return
+               # the same suburb for multiple search variations)
+               if (!$sessionProgressTable->hasSuburbBeenProcessed($threadID, $_->{'text'}))
+               { 
+                  
+                  #print "accepted\n";               
+                  my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url, $parentLabel.".".$_->{'text'});
+               
+                  # add this new transaction to the list to return for processing
+                  $transactionList[$noOfTransactions] = $newHTTPTransaction;
+                  $noOfTransactions++;
+               }
+               else
+               {
+                  $printLogger->print("   parseSearchForm:suburb ", $_->{'text'}, " previously processed in this thread.  Skipping...\n");
+               }
             }
          }
          
@@ -433,42 +662,38 @@ sub parseREIWASalesSearchForm
       # construct the hash of subareas 
       $optionsRef = $htmlForm->getSelectionOptions('SubArea');
       if ($optionsRef)
-      {         
+      {     
+         $sessionProgressTable->prepareSuburbStateMachine($threadID);     # 23Jan05
+         
          foreach (@$optionsRef)
          {  
             # get the value to this option in the selection            
             if ($_->{'value'} != 0)  # ignore [All]
-            {           
-               $acceptSuburb = 1;
-               if ($startLetter)
-               {                              
-                  # if the start letter is defined, use it to constrain the range of 
-                  # suburbs processed
-                  # if the first letter if less than the start then reject               
-                  if ($_->{'text'} lt $startLetter)
-                  {
-                     # out of range
-                     $acceptSuburb = 0;
-                     #print "out of start range\n";
-                  }                              
+            {
+               $acceptSuburb = 0;
+
+                # check if the last suburb has been encountered - if it has, then start processing from this point
+               $useThisSuburb = $sessionProgressTable->isSuburbAcceptable($_->{'text'});  # 23Jan05
+               
+               if ($useThisSuburb)
+               {
+                   # determine if the suburbname is in the specific letter constraint
+                  $acceptSuburb = isSuburbNameInRange($_->{'text'}, $startLetter, $endLetter);  # 23Jan05
                }
-              
-               if ($endLetter)
-               {               
-                  # if the end letter is defined, use it to constrain the range of 
-                  # suburbs processed
-                  # if the first letter is greater than the end then reject       
-                  if ($_->{'text'} gt $endLetter)
-                  {
-                     # out of range
-                     $acceptSuburb = 0;
-                   #  print "out of end range\n";
-                  }               
-               }
-         
+               
                if ($acceptSuburb)
                {
-                  $subAreaHash{$_->{'text'}} = $_->{'value'};
+                  # 23 Jan 05 - another check - see if the suburb has already been 'completed' in this thread
+                  # if it has been, then don't do it again (avoids special case where servers may return
+                  # the same suburb for multiple search variations)
+                  if (!$sessionProgressTable->hasSuburbBeenProcessed($threadID, $_->{'text'}))
+                  { 
+                     $subAreaHash{$_->{'text'}} = $_->{'value'};
+                  }
+                  else
+                  {
+                     $printLogger->print("   parseSearchForm:suburb ", $_->{'text'}, " previously processed in this thread.  Skipping...\n");
+                  }
                }
             }
          } # end foreach
@@ -510,73 +735,6 @@ sub parseREIWASalesSearchForm
    else
    {      
       $printLogger->print("   parseSearchForm:returning zero transactions.\n");
-      return @emptyList;
-   }   
-}
-
-# -------------------------------------------------------------------------------------------------
-# parseREIWASalesSearchQuery
-# parses the htmlsyntaxtree generated in response to a search
-#
-# Purpose:
-#  construction of the repositories
-#
-# Parameters:
-#  DocumentReader
-#  HTMLSyntaxTree to use
-#  String URL
-#
-# Constraints:
-#  nil
-#
-# Updates:
-#  nil
-#
-# Returns:
-#  a list of HTTP transactions or URL's.
-#    
-# http://public.reiwa.com.au/misc/searchQuery.cfm???
-sub parseREIWASalesSearchQuery
-
-{	
-   my $documentReader = shift;
-   my $htmlSyntaxTree = shift;
-   my $url = shift;
-   my $instanceID = shift;
-   my $transactionNo = shift;
-   my $threadID = shift;
-   my $parentLabel = shift;
-   
-   my $htmlForm;
-   my $actionURL;
-   my $httpTransaction;
-   my $printLogger = $documentReader->getGlobalParameter('printLogger');
-      
-   $printLogger->print("in parseSearchQuery ($parentLabel)\n");
-       
-   # if this page contains a form to select whether to proceed or not...
-   $htmlForm = $htmlSyntaxTree->getHTMLForm();
-   if ($htmlForm)
-   {       
-      #$actionURL = new URI::URL($htmlForm->getAction(), $url)->abs();
-           
-      #%postParameters = $htmlForm->getPostParameters();
-      $printLogger->print("   parseSearchQueury: returning POST transaction for continue form.\n");
-      #$httpTransaction = HTTPTransaction::new($actionURL, 'POST', \%postParameters, $url);
-      $httpTransaction = HTTPTransaction::new($htmlForm, $url, $parentLabel);            
-   }	  
-   else 
-   {
-      $printLogger->print("   parseSearchQuery: continue form not found\n");
-   }
-   
-   if ($httpTransaction)
-   {
-      return ($httpTransaction);
-   }
-   else
-   {      
-      $printLogger->print("   parseSearchQuery: returning empty list\n");
       return @emptyList;
    }   
 }
@@ -646,149 +804,6 @@ sub parseREIWASalesHomePage
    {
       return @emptyList;
    }
-}
-
-# -------------------------------------------------------------------------------------------------
-# parseREIWASalesSearchList
-# parses the htmlsyntaxtree that contains the list of homes generated in response 
-# to a query
-#
-# Purpose:
-#  construction of the repositories
-#
-# Parameters:
-#  DocumentReader
-#  HTMLSyntaxTree to use
-#  String URL
-#
-# Constraints:
-#  nil
-#
-# Updates:
-#  database
-#
-# Returns:
-#  a list of HTTP transactions or URL's.
-#    
-sub parseREIWASalesSearchList
-
-{	
-   my $documentReader = shift;
-   my $htmlSyntaxTree = shift;
-   my $url = shift;    
-   my $instanceID = shift;
-   my $transactionNo = shift;
-   my $threadID = shift;
-   my $parentLabel = shift;
-   
-   my $printLogger = $documentReader->getGlobalParameter('printLogger');
-   my $sourceName =  $documentReader->getGlobalParameter('source');
-   
-   my @urlList;        
-   my $firstRun = 1;
-   my $statusTable = $documentReader->getStatusTable();
-   my $recordsEncountered = 0;
-
-   # --- now extract the property information for this page ---
-   $printLogger->print("inParseSearchList ($parentLabel):\n");
-   #$htmlSyntaxTree->printText();
-   if ($htmlSyntaxTree->containsTextPattern("matching listings"))
-   {         
-      # get all anchors containing any text
-      if ($housesListRef = $htmlSyntaxTree->getAnchorsAndTextContainingPattern("\#"))
-      {  
-         
-         # loop through all the entries in the log cache
-         $printLogger->print("   parseSearchList: checking if unqiue ID exists...\n");
-         if ($sqlClient->connect())
-         {
-            foreach (@$housesListRef)
-            {
-               $sourceID = $$_{'string'};
-               $sourceURL = $$_{'href'};
-              
-               if ($firstRun)
-               {
-                  $htmlSyntaxTree->setSearchStartConstraintByText($sourceID);
-                  $firstRun = 0;
-               }
-              
-               # get the price range - the price is obtained to see if it's changed from the cache'd value.  If the price has
-               # changed then the full record is downloaded again.              
-               $priceRangeString = $htmlSyntaxTree->getNextTextAfterPattern($sourceID);
-               ($priceLowerString, $priceUpperString) = split /\-/, $priceRangeString;
-               $priceLower = $documentReader->strictNumber($documentReader->parseNumber($priceLowerString, 1));
-               $priceUpper = $documentReader->strictNumber($documentReader->parseNumber($priceUpperString, 1));
-               if ($priceLower)
-               {
-                  $printLogger->print("   printSearchList: checking if price changed (now '$priceLower')\n");
-               }
-               # check if the cache already contains this unique id
-               # $_ is a reference to a hash
-               if (!$advertisedSaleProfiles->checkIfTupleExists($sourceName, $sourceID, undef, $priceLower, $priceHigher))                              
-               {   
-                  $printLogger->print("   parseSearchList: adding anchor id ", $sourceID, "...\n");
-                  #$printLogger->print("   parseSearchList: url=", $sourceURL, "\n");          
-                   my $httpTransaction = HTTPTransaction::new($sourceURL, $url, $parentLabel.".".$sourceID);                  
-             
-                   push @urlList, $httpTransaction;
-            #      push @urlList, $sourceURL;
-               }
-               else
-               {
-                  $printLogger->print("   parseSearchList: id ", $sourceID , " in database. Updating last encountered field...\n");
-                  $advertisedSaleProfiles->addEncounterRecord($sourceName, $sourceID, undef);
-               }
-               $recordsEncountered++;  # count records seen
-            }      
-            $statusTable->addToRecordsEncountered($threadID, $recordsEncountered, $url);
-         }
-         else
-         {
-            $printLogger->print("   parseSearchList:", $sqlClient->lastErrorMessage(), "\n");
-         }         
-         
-         # now get the anchor for the NEXT button if it's defined 
-         # this is an image with source 'right_btn'
-         $nextButtonListRef = $htmlSyntaxTree->getAnchorsContainingImageSrc("right_btn");
-                  
-         if ($nextButtonListRef)
-         {            
-            $printLogger->print("   parseSearchList: list includes a 'next' button anchor...\n");
-            $httpTransaction = HTTPTransaction::new($$nextButtonListRef[0], $url, $parentLabel);                  
-
-            @anchorsList = (@urlList, $httpTransaction);
-         }
-         else
-         {            
-            $printLogger->print("   parseSearchList: list has no 'next' button anchor...\n");
-            @anchorsList = @urlList;
-         }                      
-        
-         $length = @anchorsList;         
-         $printLogger->print("   parseSearchList: following $length anchors...\n");         
-      }
-      else
-      {
-         $printLogger->print("   parseSearchList: no anchors found in list.\n");
-      }
-   }	  
-   else 
-   {
-      $printLogger->print("   parseSearchList: pattern not found\n");
-   }
-   
-   # return the list or anchors or empty list   
-   if ($housesListRef)
-   {      
-      return @anchorsList;
-   }
-   else
-   {      
-      $printLogger->print("   parseSearchList: returning empty anchor list.\n");
-      return @emptyList;
-   }   
-     
 }
 
 # -------------------------------------------------------------------------------------------------

@@ -25,6 +25,7 @@ require Exporter;
 
 use DBI;
 use SQLClient;
+use SessionProgressTable;
 
 @ISA = qw(Exporter);
 
@@ -201,6 +202,11 @@ sub requestNewThread
             {
                print "ok (new $threadID)\n";
                $threadIDSet = 1;
+               # IMPORTANT - clear the session information for this previous use of this thread, if still defined
+               # otherwise it might think it needs to recover from a previous position
+               $sessionProgressTable = SessionProgressTable::new($sqlClient);
+               $sessionProgressTable->releaseSession($threadID);
+            
             }
             else
             {

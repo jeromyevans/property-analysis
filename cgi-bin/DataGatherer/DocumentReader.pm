@@ -53,6 +53,10 @@
 #                          - added delete cookies function to start a fresh session
 #              19 Jan 2005 - added support for the StatusTable to request and reuse threadID's in the constructor
 #                          - replaced recovery process to use StatusTable instead of text file
+#              22 Jan 2004 - added support for the SessionProgressTable to record the progress of each thread
+#                          - extended timeout for parsing from 20seconds to 45 seconds as the low value was due to 
+#   to memory leak error that's mainly now avoided.  On initial runs because of the size of the database the parser
+#   ran take a long time.
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -72,6 +76,7 @@ use HTTPTransaction;
 use PrintLogger;
 use File::Copy;
 use StatusTable;
+use SessionProgressTable;
 
 my $DEFAULT_USER_AGENT ="Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)";
 
@@ -119,6 +124,10 @@ sub new ($ $ $ $ $ $ $ $ $)
    # access the statusTable
    $statusTable = StatusTable::new($sqlClient);
    $$tablesHashRef{'statusTable'} = $statusTable;
+   
+   # access the sessionProgressTable
+   $sessionProgressTable = SessionProgressTable::new($sqlClient);
+   $$tablesHashRef{'sessionProgressTable'} = $sessionProgressTable;
    
    if ($threadID > 0)
    {
@@ -820,7 +829,7 @@ sub _parseDocument
          $endTime = time;
          $runningTime = $endTime - $startTime;
            #print "Transaction $transactionNo took $runningTime seconds\n";
-         if ($runningTime > 20)
+         if ($runningTime > 45)
          {
             $printLogger->print("Getting very slow...low memory....halting this instance (should automatically restart)\n");
             $this->{'lowMemoryError'} = 1;
@@ -1145,9 +1154,11 @@ sub endRecoveryThread
    
    # get the status table
    $statusTable = $$tablesHashRef{'statusTable'};
+   $sessionProgressTable = $$tablesHashRef{'sessionProgressTable'};
 
    # update the status table releasing the threadID
    $statusTable->releaseThread($threadID);
+   $sessionProgressTable->releaseSession($threadID);
 }
 
 
@@ -1321,6 +1332,21 @@ sub getStatusTable
    $statusTable = $$tablesHashRef{'statusTable'};
    
    return $statusTable;
+}
+
+
+# -------------------------------------------------------------------------------------------------
+
+# gets the reference to the sessionProgressTable created for the DocumentReader
+sub getSessionProgressTable
+{
+   my $this = shift;
+   my $tablesHashRef = $this->{'tablesHashRef'};      
+   
+   # get the status table
+   $sessionProgressTable = $$tablesHashRef{'sessionProgressTable'};
+   
+   return $sessionProgressTable;
 }
 
 

@@ -12,10 +12,6 @@
 # Date: $Date$
 # $Id$
 #
-# CURRENT PROBLEM IS THAT IF IT BOMBS OUT within a region it goes back to the start
-# of that region for some reason and doesn't seem to recover.  It's related to the
-# sesison file.
-#
 # 26 Oct 04 - significant re-architecting to return to the base page and clear cookies after processing each
 #  region - the theory is that it will allow NSW to be completely processed without stuffing up the 
 #  session on domain server.
@@ -29,7 +25,11 @@
 #   pointing back to that OriginatingHTML record
 # 5 December 2004 - adapted to use common AdvertisedPropertyProfiles instead of separate rentals and sales tables
 # 22 January 2005  - added support for the StatusTable reporting of progress for the thread
-
+#                  - added support for the SessionProgressTable reporting of progress of the thread
+#                  - added check against SessionProgressTable to reject suburbs that appear 'completed' already
+#  in the table.  Should prevent procesing of suburbs more than once if the server returns the same suburb under
+#  multiple searches.  Note: completed indicates the propertylist has been parsed, not necessarily all the details.
+#
 use PrintLogger;
 use CGI qw(:standard);
 use HTTPClient;
@@ -46,6 +46,7 @@ use WebsiteParser_Common;
 use DomainRegions;
 use OriginatingHTML;
 use StatusTable;
+use SessionProgressTable;
 
 @ISA = qw(Exporter);
 
@@ -419,7 +420,7 @@ sub parseDomainSalesPropertyDetails
    my $checksum;   
    $statusTable = $documentReader->getStatusTable();
 
-   $printLogger->print("in parsePropertyDetails ()\n");
+   $printLogger->print("in parsePropertyDetails ($parentLabel)\n");
    
    
    if ($htmlSyntaxTree->containsTextPattern("Property Details"))
@@ -476,8 +477,9 @@ sub parseDomainSalesPropertyDetails
 
 
 # -------------------------------------------------------------------------------------------------
-# parseDomainSalesPropertyDetailsBACKUP
-# parses the htmlsyntaxtree to extract advertised sale information and insert it into the database
+# parseSearchResults
+# parses the htmlsyntaxtree that contains the list of properties generated in response 
+# to to the search query
 #
 # Purpose:
 #  construction of the repositories
@@ -496,81 +498,151 @@ sub parseDomainSalesPropertyDetails
 # Returns:
 #  a list of HTTP transactions or URL's.
 #    
-sub parseDomainSalesPropertyDetailsBACKUP
+sub parseDomainSalesSearchResults
 
 {	
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
-   my $url = shift;
+   my $url = shift;    
    my $instanceID = shift;
    my $transactionNo = shift;
-   my $threadID = shift; 
+   my $threadID = shift;
    my $parentLabel = shift;
    
-   my $sqlClient = $documentReader->getSQLClient();
-   my $tablesRef = $documentReader->getTableObjects();
+   my @urlList;        
+   my $firstRun = 1;
    my $printLogger = $documentReader->getGlobalParameter('printLogger');
    my $sourceName = $documentReader->getGlobalParameter('source');
-
-   my $advertisedSaleProfiles = $$tablesRef{'advertisedSaleProfiles'};
-   my $originatingHTML = $$tablesRef{'originatingHTML'};  # 27Nov04
+   my $state = $documentReader->getGlobalParameter('state');
+   my $suburbName;
+   my $statusTable = $documentReader->getStatusTable();
+   my $recordsEncountered = 0;
+   my $sessionProgressTable = $documentReader->getSessionProgressTable();
    
-   my %saleProfiles;
-   my $checksum;   
-   $printLogger->print("in parsePropertyDetails ($parentLabel)\n");
+   # --- now extract the property information for this page ---
+   $printLogger->print("inParseSearchResults ($parentLabel):\n");
    
    
-   if ($htmlSyntaxTree->containsTextPattern("Property Details"))
-   {
-                                         
-      # parse the HTML Syntax tree to obtain the advertised sale information
-      %saleProfiles = extractDomainSaleProfile($documentReader, $htmlSyntaxTree, $url);                  
-      tidyRecord($sqlClient, \%saleProfiles);        # 27Nov04 - used to be called validateProfile
-      # calculate a checksum for the information - the checksum is used to approximately 
-      # identify the uniqueness of the data
-      $checksum = $documentReader->calculateChecksum(\%saleProfiles);
-
-      $printLogger->print("   parsePropertyDetails: extracted checksum = ", $checksum, ". Checking log...\n");
-             
+   # report that a suburb has started being processed...
+   $suburbName = extractOnlyParentName($parentLabel);
+   $sessionProgressTable->reportRegionOrSuburbChange($threadID, undef, $suburbName);   
+ 
+   
+   #$htmlSyntaxTree->printText();
+   if ($htmlSyntaxTree->containsTextPattern("Search Results"))
+   {         
+      
       if ($sqlClient->connect())
-      {		 	 
-         # check if the log already contains this checksum - if it does, assume the tuple already exists                  
-         if ($advertisedSaleProfiles->checkIfTupleExists($sourceName, $saleProfiles{'SourceID'}, $checksum, $saleProfiles{'AdvertisedPriceLower'}))
+      {
+      
+         $htmlSyntaxTree->setSearchStartConstraintByText("Your search for properties");
+         $htmlSyntaxTree->setSearchEndConstraintByText("email me similar properties");
+      
+         # get the suburbname from the page - used to tracking progress...
+         $trialSuburbName = $htmlSyntaxTree->getNextTextAfterPattern("suburbs:");
+         $suburbName = matchSuburbName($sqlClient, $suburbName, $state);
+         if (!$suburbName)
          {
-            # this tuple has been previously extracted - it can be dropped
-            # record that it was encountered again
-            $printLogger->print("   parsePropertyDetails: identical record already encountered at $sourceName.\n");
-            $advertisedSaleProfiles->addEncounterRecord($sourceName, $saleProfiles{'SourceID'}, $checksum);
+            $suburbName = $trialSuburbName;
          }
-         else
+         
+         $htmlSyntaxTree->resetSearchConstraints();
+         
+         # each entry is in it's own table.
+         # the suburb name and price are in an H4 tag
+         # the next non-image anchor href attribute contains the unique ID
+        
+         while ($htmlSyntaxTree->setSearchStartConstraintByTag('dl'))
          {
-            $printLogger->print("   parsePropertyDetails: unique checksum/url - adding new record.\n");
-            # this tuple has never been extracted before - add it to the database
-            # 27Nov04 - addRecord returns the identifer (primaryKey) of the record created
-            $identifier = $advertisedSaleProfiles->addRecord($sourceName, \%saleProfiles, $url, $checksum, $instanceID, $transactionNo);
             
-            if ($identifier >= 0)
+            $titleString = $htmlSyntaxTree->getNextText();
+            $sourceURL = $htmlSyntaxTree->getNextAnchor();
+            
+            # not sure why this is needed - it shifts it onto the next property, otherwise it finds the same one twice. 
+            $htmlSyntaxTree->setSearchStartConstraintByTag('dl');
+            
+            # --- extract values ---
+            ($crud, $priceLowerString) = split(/\$/, $titleString, 2);
+            if ($priceLowerString)
             {
-               # 27Nov04: save the HTML file entry that created this record
-               $htmlIdentifier = $originatingHTML->addRecord($identifier, $url, $htmlSyntaxTree, "advertisedSaleProfiles");
+               $priceLower = $documentReader->strictNumber($documentReader->parseNumber($priceLowerString));
             }
+            else
+            {
+               $priceLower = undef;
+            }
+            
+            # remove non-numeric characters from the string occuring after the question mark
+            ($crud, $sourceID) = split(/\?/, $sourceURL, 2);
+            $sourceID =~ s/[^0-9]//gi;
+            $sourceURL = new URI::URL($sourceURL, $url)->abs()->as_string();      # convert to absolute
+           
+            # check if the cache already contains this unique id            
+            if (!$advertisedSaleProfiles->checkIfTupleExists($sourceName, $sourceID, undef, $priceLower, undef))                              
+            {   
+               $printLogger->print("   parseSearchResults: adding anchor id ", $sourceID, "...\n");
+               #$printLogger->print("   parseSearchResults: url=", $sourceURL, "\n"); 
+               my $httpTransaction = HTTPTransaction::new($sourceURL, $url, $parentLabel.".".$sourceID);                  
+               #push @urlList, $sourceURL;
+               push @urlList, $httpTransaction;
+            }
+            else
+            {
+               $printLogger->print("   parseSearchResults: id ", $sourceID , " in database. Updating last encountered field...\n");
+               $advertisedSaleProfiles->addEncounterRecord($sourceName, $sourceID, undef);
+            }
+            $recordsEncountered++;  # count records seen
+            
+            # 23Jan05:save that this suburb has had some progress against it
+            $sessionProgressTable->reportProgressAgainstSuburb($threadID, 1);
          }
+         $statusTable->addToRecordsEncountered($threadID, $recordsEncountered, $url);
       }
       else
       {
-         $printLogger->print("   parsePropertyDetails:", $sqlClient->lastErrorMessage(), "\n");
+         $printLogger->print("   parseSearchResults:", $sqlClient->lastErrorMessage(), "\n");
+      }         
+         
+      # now get the anchor for the NEXT button if it's defined 
+      $nextButton = $htmlSyntaxTree->getNextAnchorContainingPattern("Next");
+                    
+      if ($nextButton)
+      {            
+         $printLogger->print("   parseSearchResults: list includes a 'next' button anchor...\n");
+         $httpTransaction = HTTPTransaction::new($nextButton, $url, $parentLabel);                  
+         @anchorsList = (@urlList, $httpTransaction);
       }
-   }
+      else
+      {            
+         $printLogger->print("   parseSearchResults: list has no 'next' button anchor...\n");
+         @anchorsList = @urlList;
+         # 23Jan05:save that this suburb has (almost) completed - just need to process the details
+         $sessionProgressTable->reportSuburbCompletion($threadID);
+      }                      
+        
+      $length = @anchorsList;         
+      $printLogger->print("   parseSearchResults: following $length properties for '$currentRegion'...\n");               
+   }	  
    else
    {
-      $printLogger->print("   parsePropertyDetails:property details not found.\n");      
+      $printLogger->print("   parseSearchResults: pattern not found\n");   
    }
    
-   
-   # return an empty list
-   return @emptyList;
+   # return the list or anchors or empty list   
+   if ($length > 0)
+   {      
+      return @anchorsList;
+   }
+   else
+   {      
+      # 23Jan05:save that this suburb has (almost) completed - just need to process the details
+      $sessionProgressTable->reportSuburbCompletion($threadID);
+      
+      $printLogger->print("   parseSearchList: returning empty anchor list.\n");
+      return @emptyList;
+   }   
+     
 }
-
 
 # -------------------------------------------------------------------------------------------------
 
@@ -617,6 +689,7 @@ sub parseDomainSalesChooseSuburbs
    my $startLetter = $documentReader->getGlobalParameter('startrange');
    my $endLetter =  $documentReader->getGlobalParameter('endrange');
    my $state = $documentReader->getGlobalParameter('state');
+   my $sessionProgressTable = $documentReader->getSessionProgressTable();
       
    $printLogger->print("in parseChooseSuburbs ($parentLabel)\n");
 
@@ -630,13 +703,6 @@ sub parseDomainSalesChooseSuburbs
        
       if ($htmlForm)
       {       
-#         $actionURL = new URI::URL($htmlForm->getAction(), $parameters{'url'})->abs()->as_string();
-#         @defaultPostParameters = $htmlForm->getPostParameters();
-#print "DefaultPostParameters:\n";            
-#         foreach (@defaultPostParameters)
-#         {
-#            print $$_{'name'}, "=", $$_{'value'},"\n";
-#         }
          # for all of the suburbs defined in the form, create a transaction to get it
          if (($startLetter) || ($endLetter))
          {
@@ -647,53 +713,16 @@ sub parseDomainSalesChooseSuburbs
          {         
             # recover the state, region, suburb combination from the recovery file for this thread
 
-            $lastSuburb = loadLastSuburb($threadID);
+            $sessionProgressTable->prepareSuburbStateMachine($threadID);     
 
-            # if not already processing regions in this process instance check if 
-            # continuing a thread or starting from scratch
-           
-            if ((!defined $lastSuburb) || ($lastSuburb eq 'Nil'))
-            {
-               # set flag to start at the first suburb
-               $stillSeeking = 0;
-               $useNextSuburb = 0;
-               $lastSuburbDefined = 0;
-            }
-            else
-            {
-               # the last suburb is defined
-               $stillSeeking = 1;
-               $useNextSuburb = 0;   
-               $lastSuburbDefined = 1;
-            }
-           
             # loop through the list of suburbs in the form...
             foreach (@$optionsRef)
             {  
-               $value = $_->{'value'};   # this is the suburb name...
-# print "'$value' useNextSuburb$useNextSuburb stillSeeking=$stillSeeking lastSubDef=$lastSuburbDefined lastSuburb=$lastSuburb\n";           
+               $value = $_->{'value'};   # this is the suburb name...           
                # check if the last suburb has been encountered - if it has, then start processing from this point
-               if ($useNextSuburb)
-               {
-                  $stillSeeking = 0;
-               }
-               else
-               {
-                  # seek forward to the last suburb processed
-                  if ($lastSuburbDefined)
-                  {
-                     # check if this is the last suburb
-                     if ($value =~ /$lastSuburb/i)
-                     {
-                        # this is the last suburb processed - set the flag to start from the next one
-                        $useNextSuburb = 1;
-                        $stillSeeking = 1;   
-                     }
-                  }
-               }
-                
-               # only process the suburb once the stillSeeking flag has been cleared...
-               if (!$stillSeeking)
+               $useThisSuburb = $sessionProgressTable->isSuburbAcceptable($value);
+               
+               if ($useThisSuburb)
                {
                   if ($value =~ /All Suburbs/i)
                   {
@@ -702,60 +731,36 @@ sub parseDomainSalesChooseSuburbs
                   }
                   else
                   {
-                     #($firstChar, $restOfString) = split(//, $_->{'text'});
-                     #print $_->{'text'}, " FC=$firstChar ($startLetter, $endLetter) ";
-                     $acceptSuburb = 1;
-                     if ($startLetter)
-                     {                              
-                        # if the start letter is defined, use it to constrain the range of 
-                        # suburbs processed
-                        # if the first letter if less than the start then reject               
-                        if ($_->{'text'} le $startLetter)
-                        {
-                           # out of range
-                           $acceptSuburb = 0;
-                           #print $_->{'text'}, " out of start range (start=$startLetter)\n";
-                        }                              
-                     }
-                                
-                     if ($endLetter)
-                     {               
-                        # if the end letter is defined, use it to constrain the range of 
-                        # suburbs processed
-                        # if the first letter is greater than the end then reject       
-                        if ($_->{'text'} ge $endLetter)
-                        {
-                           # out of range
-                           $acceptSuburb = 0;
-                           #print "'", $_->{'text'}, "' out of end range (end='$endLetter')\n";
-                        }               
-                     }
-                           
+                     # determine if the suburbname is in the specific letter constraint
+                     $acceptSuburb = isSuburbNameInRange($_->{'text'}, $startLetter, $endLetter);
+                                           
                      if ($acceptSuburb)
                      {         
+                        # 23 Jan 05 - another check - see if the suburb has already been 'completed' in this thread
+                        # if it has been, then don't do it again (avoids special case where servers may return
+                        # the same suburb for multiple search variations)
+                        if (!$sessionProgressTable->hasSuburbBeenProcessed($threadID, $value))
+                        {  
                         
-                        $printLogger->print("  $currentRegion:", $_->{'text'}, "\n");
-   #                     my %domainRegion;
-                        
-   #                     $domainRegion{'region'} = $currentRegion;
-   #                     $domainRegion{'suburb'} = $_->{'text'};
-   #                     $domainRegion{'state'} = $state;
-   #                     $domainRegions->addRecord(\%domainRegion);
-
-                        # set the suburb name in the form
+                           $printLogger->print("  $currentRegion:", $_->{'text'}, "\n");
    
-                        $htmlForm->setInputValue('_ctl0:listboxSuburbs', $_->{'value'});            
-   
-                        my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url, $parentLabel.".".$_->{'text'});
+                           # set the suburb name in the form   
+                           $htmlForm->setInputValue('_ctl0:listboxSuburbs', $_->{'value'});            
+      
+                           my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url, $parentLabel.".".$_->{'text'});
+                
+                           #print $_->{'value'},"\n";
+                           # add this new transaction to the list to return for processing
+                           $transactionList[$noOfTransactions] = $newHTTPTransaction;
+                           $noOfTransactions++;
+      
+                           $htmlForm->clearInputValue('_ctl0:listboxSuburbs');
+                        }
+                        else
+                        {
+                           $printLogger->print("   ParseChooseSuburbs:suburb ", $_->{'text'}, " previously processed in this thread.  Skipping...\n");
+                        }
                   
-               
-                        #print $_->{'value'},"\n";
-                        # add this new transaction to the list to return for processing
-                        $transactionList[$noOfTransactions] = $newHTTPTransaction;
-                        $noOfTransactions++;
-   
-                        $htmlForm->clearInputValue('_ctl0:listboxSuburbs');            
-               
                      }
                   }
                }
@@ -846,6 +851,7 @@ sub parseDomainSalesChooseRegions
    my @transactionList;
    my $noOfTransactions = 0;
    my $printLogger = $documentReader->getGlobalParameter('printLogger');
+   my $sessionProgressTable = $documentReader->getSessionProgressTable();
    
    
    $printLogger->print("in parseChooseRegions ($parentLabel)\n");
@@ -866,90 +872,17 @@ sub parseDomainSalesChooseRegions
          # get all of the checkboxes and set them
          $checkboxListRef = $htmlForm->getCheckboxes();
     
-         # 26 Oct 2004 - just process all the suburbs in the next region, then drop back to 
-         # to the home page to start a new session with new cookies
-         $startFirstRegion = 0;
-         $restartLastRegion = 0;
-         $continueNextRegion = 0;
-        
-         $lastRegion = loadLastRegion($threadID);  # load the last region processed in this thread
-         # if not already processing regions in this process instance check if 
-         # continuing a thread or starting from scratch
-         if ((!defined $currentRegion) || ($currentRegion =~ /Nil/i))
-         {
-            # the last region isn't defined for this thread - start from the beginning
-            if ((!defined $lastRegion) || ($lastRegion =~ /Nil/i))
-            {
-               $startFirstRegion = 1;
-            }
-            else
-            {
-               # the last region is defined in the recovery file - continue processing that region
-               # as isn't know if it terminated correctly
-               $restartLastRegion = 1;
-            }
-         }
-         else
-         {
-            # continue from the next region in the list (still in the same process)
-            $continueNextRegion = 1;
-         }
+         $sessionProgressTable->prepareRegionStateMachine($threadID, $currentRegion);     
 
          #print "restartLastRegion:$restartLastRegion($lastRegion) startFirstRegion:$startFirstRegion continueNextRegion:$continueNextRegion (cr=$currentRegion)\n";
 
          # loop through all the regions defined in this page - the flags are used to determine 
          # which one to set for the transaction
-         $regionAdded = 0;         
-         $useNextRegion = 0;
-         $useThisRegion = 0;
+         $regionAdded = 0;
          foreach (@$checkboxListRef)
-         {   
-            
-            if (!$useNextRegion)
-            {       
-               # if the lastRegion processed with the current checkbox then the next checkbox is the 
-               # one to process this time
-               if ($continueNextRegion)
-               {            
-                  # have previously processed a region - move onto the next one
-                  if ($currentRegion eq $_->getValue())
-                  {
-                     # this is the last region processed - set a flag to use the next one instead
-          #           print "   **setting useNextRegion to 1 as currentValue = ", $_->getValue(), "\n";
-                     $useNextRegion = 1;
-
-                  }
-                  else
-                  {
-          #           print "   **seeking currentRegion ($currentRegion isn't ", $_->getValue(),")\n";
-                  }
-               }
-               else
-               {
-                  if ($restartLastRegion)
-                  {
-                     # restart from the region in the recovery file
-                     if ($lastRegion eq $_->getValue())
-                     {
-                        # this is it - start from here
-                        $useThisRegion = 1;
-                     }
-                  }
-                  else
-                  {
-                     # otherwise we're continuing from the start
-           #          print "   **setting use this region ", $_->getValue(), "\n";
-
-                     $useThisRegion = 1;
-                  }
-               }
-            }
-            else
-            {
-               # the $useNextRegion flag was set in the last iteration - now set useThisRegion flag
-               # to processs this one
-               $useThisRegion = 1;
-            }
+         {
+            # use the state machine to determine if this region should be processed
+            $useThisRegion = $sessionProgressTable->isRegionAcceptable($_->getValue(), $currentRegion);
             
             #print "   ", $_->getValue(), ":useThisRegion:$useThisRegion useNextRegion:$useNextRegion\n";
             
@@ -960,7 +893,7 @@ sub parseDomainSalesChooseRegions
                # set this checkbox input to true
                $htmlForm->setInputValue($_->getName(), $_->getValue());            
                
-               # set global variable for display purposes only
+               # set global variable for tracking that this instance has been run before
                $currentRegion = $_->getValue();
                
                my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url, $parentLabel.".".$_->getValue());
@@ -969,11 +902,10 @@ sub parseDomainSalesChooseRegions
                $noOfTransactions++;
 
                $htmlForm->clearInputValue($_->getName());
-               
                # record which region was last processed in this thread
-               saveLastRegion($threadID, $_->getValue());
-               saveLastSuburb($threadID, 'Nil');          # reset to the first suburb in the region
-
+               # and reset to the first suburb in the region
+               $sessionProgressTable->reportRegionOrSuburbChange($threadID, $currentRegion, 'Nil');
+               
                $regionAdded = 1;
                last;   # break out of the checkbox loop
             }
@@ -982,9 +914,7 @@ sub parseDomainSalesChooseRegions
          if (!$regionAdded)
          {
             # no more regions to process - finished
-            
-            saveLastRegion($threadID, 'Nil');
-            saveLastSuburb($threadID, 'Nil');          # reset to the first suburb in the region
+            $sessionProgressTable->reportRegionOrSuburbChange($threadID, 'Nil', 'Nil');     
          }
          else
          {
@@ -1115,160 +1045,6 @@ sub parseDomainSalesChooseState
    }
 }
 
-# -------------------------------------------------------------------------------------------------
-# parseSearchResults
-# parses the htmlsyntaxtree that contains the list of properties generated in response 
-# to to the search query
-#
-# Purpose:
-#  construction of the repositories
-#
-# Parameters:
-#  DocumentReader
-#  HTMLSyntaxTree to use
-#  String URL
-#
-# Constraints:
-#  nil
-#
-# Updates:
-#  database
-#
-# Returns:
-#  a list of HTTP transactions or URL's.
-#    
-sub parseDomainSalesSearchResults
-
-{	
-   my $documentReader = shift;
-   my $htmlSyntaxTree = shift;
-   my $url = shift;    
-   my $instanceID = shift;
-   my $transactionNo = shift;
-   my $threadID = shift;
-   my $parentLabel = shift;
-   
-   my @urlList;        
-   my $firstRun = 1;
-   my $printLogger = $documentReader->getGlobalParameter('printLogger');
-   my $sourceName = $documentReader->getGlobalParameter('source');
-   my $state = $documentReader->getGlobalParameter('state');
-   my $suburbName;
-   my $statusTable = $documentReader->getStatusTable();
-   my $recordsEncountered = 0;
-   
-   # --- now extract the property information for this page ---
-   $printLogger->print("inParseSearchResults ($parentLabel):\n");
-   #$htmlSyntaxTree->printText();
-   if ($htmlSyntaxTree->containsTextPattern("Search Results"))
-   {         
-      
-      if ($sqlClient->connect())
-      {
-      
-         $htmlSyntaxTree->setSearchStartConstraintByText("Your search for properties");
-         $htmlSyntaxTree->setSearchEndConstraintByText("email me similar properties");
-      
-         # get the suburbname from the page - used to tracking progress...
-         $trialSuburbName = $htmlSyntaxTree->getNextTextAfterPattern("suburbs:");
-         $suburbName = matchSuburbName($sqlClient, $suburbName, $state);
-         if (!$suburbName)
-         {
-            $suburbName = $trialSuburbName;
-         }
-         
-         $htmlSyntaxTree->resetSearchConstraints();
-         
-         # each entry is in it's own table.
-         # the suburb name and price are in an H4 tag
-         # the next non-image anchor href attribute contains the unique ID
-         
-         while ($htmlSyntaxTree->setSearchStartConstraintByTag('dl'))
-         {
-            
-            $titleString = $htmlSyntaxTree->getNextText();
-            $sourceURL = $htmlSyntaxTree->getNextAnchor();
-            
-            # not sure why this is needed - it shifts it onto the next property, otherwise it finds the same one twice. 
-            $htmlSyntaxTree->setSearchStartConstraintByTag('dl');
-            
-            # --- extract values ---
-            ($crud, $priceLowerString) = split(/\$/, $titleString, 2);
-            if ($priceLowerString)
-            {
-               $priceLower = $documentReader->strictNumber($documentReader->parseNumber($priceLowerString));
-            }
-            else
-            {
-               $priceLower = undef;
-            }
-            
-            # remove non-numeric characters from the string occuring after the question mark
-            ($crud, $sourceID) = split(/\?/, $sourceURL, 2);
-            $sourceID =~ s/[^0-9]//gi;
-            $sourceURL = new URI::URL($sourceURL, $url)->abs()->as_string();      # convert to absolute
-           
-            # check if the cache already contains this unique id            
-            if (!$advertisedSaleProfiles->checkIfTupleExists($sourceName, $sourceID, undef, $priceLower, undef))                              
-            {   
-               $printLogger->print("   parseSearchResults: adding anchor id ", $sourceID, "...\n");
-               #$printLogger->print("   parseSearchResults: url=", $sourceURL, "\n"); 
-               my $httpTransaction = HTTPTransaction::new($sourceURL, $url, $parentLabel.".".$sourceID);                  
-               #push @urlList, $sourceURL;
-               push @urlList, $httpTransaction;
-            }
-            else
-            {
-               $printLogger->print("   parseSearchResults: id ", $sourceID , " in database. Updating last encountered field...\n");
-               $advertisedSaleProfiles->addEncounterRecord($sourceName, $sourceID, undef);
-            }
-            $recordsEncountered++;  # count records seen
-         }
-         $statusTable->addToRecordsEncountered($threadID, $recordsEncountered, $url);
-
-         # save that this suburb has been processed (for tracking progress)
-         saveLastSuburb($threadID, $suburbName);
-      }
-      else
-      {
-         $printLogger->print("   parseSearchResults:", $sqlClient->lastErrorMessage(), "\n");
-      }         
-         
-      # now get the anchor for the NEXT button if it's defined 
-      $nextButton = $htmlSyntaxTree->getNextAnchorContainingPattern("Next");
-                    
-      if ($nextButton)
-      {            
-         $printLogger->print("   parseSearchResults: list includes a 'next' button anchor...\n");
-         $httpTransaction = HTTPTransaction::new($nextButton, $url, $parentLabel);                  
-         @anchorsList = (@urlList, $httpTransaction);
-      }
-      else
-      {            
-         $printLogger->print("   parseSearchResults: list has no 'next' button anchor...\n");
-         @anchorsList = @urlList;
-      }                      
-        
-      $length = @anchorsList;         
-      $printLogger->print("   parseSearchResults: following $length properties for '$currentRegion'...\n");               
-   }	  
-   else
-   {
-      $printLogger->print("   parseSearchResults: pattern not found\n");   
-   }
-   
-   # return the list or anchors or empty list   
-   if ($length > 0)
-   {      
-      return @anchorsList;
-   }
-   else
-   {      
-      $printLogger->print("   parseSearchList: returning empty anchor list.\n");
-      return @emptyList;
-   }   
-     
-}
 
 # -------------------------------------------------------------------------------------------------
 # parseDomainSalesDisplayResponse
@@ -1312,212 +1088,6 @@ sub parseDomainSalesDisplayResponse
    return @emptyList;
    
 }
-
-
-# -------------------------------------------------------------------------------------------------
-# saveLastRegion
-
-#
-# Purpose:
-#  Debugging
-#
-# Parametrs:
-#  nil
-#
-# Constraints:
-#  nil
-#
-# Updates:
-#  $this->{'requestRef'} 
-#  $this->{'responseRef'}
-#
-# Returns:
-#   nil
-#
-sub saveLastRegion
-
-{
-   my $thisThreadID = shift;
-   my $regionName = shift;
-   my $recoveryPointFileName = "RecoverDomainRegion.last";
-   my %regionList;
-   
-   # load the cookie file name from the recovery file
-   open(SESSION_FILE, "<$recoveryPointFileName") || print "   Can't open last domain region file: $!\n"; 
-  
-   $index = 0;
-   # loop through the content of the file
-   while (<SESSION_FILE>) # read a line into $_
-   {
-      # remove end of line marker from $_
-      chomp;
-      # split on null character
-      ($threadID, $region) = split /=/;
-    
-      $regionList{$threadID} = $region;
-
-      $index++;                    
-   }
-   
-   close(SESSION_FILE);     
-   
-   # update this threadID
-   $regionList{$thisThreadID} = $regionName;
-   
-   # save the new file with the thread removed  
-   open(SESSION_FILE, ">$recoveryPointFileName") || print "Can't open file: $!"; 
-   
-   # loop through all of the elements (in reverse so they can be read into a stack)
-   foreach (keys %regionList)      
-   {        
-      print SESSION_FILE $_."=".$regionList{$_}."\n";        
-   }
-
-#   print "savedLastRegion$thisThreadID=", $regionList{$thisThreadID}, "\n";
-   
-   close(SESSION_FILE);          
-}
-
-# -------------------------------------------------------------------------------------------------
-
-# reads the name of the session corresponding to this thread from the recovery file
-sub loadLastRegion
-
-{
-   my $thisThreadID = shift;
-   my $regionName;
-   my $recoveryPointFileName = "RecoverDomainRegion.last";
-   my %regionList;
-   
-   # load the cookie file name from the recovery file
-   open(SESSION_FILE, "<$recoveryPointFileName") || print "   Can't open last domain region file: $!\n"; 
-  
-   $index = 0;
-   # loop through the content of the file
-   while (<SESSION_FILE>) # read a line into $_
-   {
-      # remove end of line marker from $_
-      chomp;
-      # split on null character
-      ($threadID, $regionName) = split /=/;
-    
-      $regionList{$threadID} = $regionName;
-
-      $index++;                    
-   }
-   
-   close(SESSION_FILE);     
-#   print "loadedLastRegion:$thisThreadID=", $regionList{$thisThreadID}, "\n";
-   
-   return $regionList{$thisThreadID};
-} 
-
-# -------------------------------------------------------------------------------------------------
-
-
-# -------------------------------------------------------------------------------------------------
-# saveLastSuburb
-
-#
-# Purpose:
-#  Debugging
-#
-# Parametrs:
-#  nil
-#
-# Constraints:
-#  nil
-#
-# Updates:
-#  $this->{'requestRef'} 
-#  $this->{'responseRef'}
-#
-# Returns:
-#   nil
-#
-sub saveLastSuburb
-
-{
-   my $thisThreadID = shift;
-   my $suburbName = shift;
-   
-   my $recoveryPointFileName = "RecoverDomainSuburb.last";
-   my %suburbList;
-   my $threadID;
-   my $suburb;
-   my $index;
-   
-   # load the cookie file name from the recovery file
-   open(SESSION_FILE, "<$recoveryPointFileName") || print "   Can't open last domain suburb file: $!\n"; 
-  
-   $index = 0;
-   # loop through the content of the file
-   while (<SESSION_FILE>) # read a line into $_
-   {
-      # remove end of line marker from $_
-      chomp;
-      # split on null character
-      ($threadID, $suburb) = split /=/;
-   
-      $suburbList{$threadID} = $suburb;
-
-      $index++;                    
-   }
-   
-   close(SESSION_FILE);     
-   
-   # update this threadID
-   $suburbList{$thisThreadID} = $suburbName;
-   
-   # save the new file with the thread removed  
-   open(SESSION_FILE, ">$recoveryPointFileName") || print "Can't open file: $!"; 
-   
-   # loop through all of the elements (in reverse so they can be read into a stack)
-   foreach (keys %suburbList)      
-   {        
-      print SESSION_FILE $_."=".$suburbList{$_}."\n";        
-   }
-
-   close(SESSION_FILE);          
-
-   print "savedLastSuburb $thisThreadID=", $suburbList{$thisThreadID}, "\n";
-   
-   return 1;
-}
-
-# -------------------------------------------------------------------------------------------------
-
-# reads the name of the suburb corresponding to this thread from the recovery file
-sub loadLastSuburb
-
-{
-   my $thisThreadID = shift;
-   my $suburbName;
-   my $recoveryPointFileName = "RecoverDomainSuburb.last";
-   my %suburbList;
-   
-   # load the cookie file name from the recovery file
-   open(SESSION_FILE, "<$recoveryPointFileName") || print "   Can't open last domain suburb file: $!\n"; 
-  
-   $index = 0;
-   # loop through the content of the file
-   while (<SESSION_FILE>) # read a line into $_
-   {
-      # remove end of line marker from $_
-      chomp;
-      # split on null character
-      ($threadID, $suburbName) = split /=/;
-    
-      $suburbList{$threadID} = $suburbName;
-
-      $index++;                    
-   }
-   
-   close(SESSION_FILE);     
-   print "loadedLastSuburb:$thisThreadID=", $suburbList{$thisThreadID}, "\n";
-   
-   return $suburbList{$thisThreadID};
-} 
 
 # -------------------------------------------------------------------------------------------------
 
