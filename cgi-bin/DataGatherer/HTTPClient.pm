@@ -15,6 +15,9 @@
 #   Cookies
 #   POST
 #
+# History:
+#  25 July 2004 - added support for optional transactionNo stored in the log file
+#
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -62,7 +65,7 @@ sub new ($)
       responseRef => undef,
       responseStackRef => \@responseStack,
       cookieJarRef => undef,
-      absoluteURL => undef   
+      absoluteURL => undef,
    };  
    bless $httpClient;    # make it an object of this class      
    
@@ -230,7 +233,8 @@ sub setProxy
 #
 # Parametrs:
 #  STRING absoluteURL to get
-#
+#  integer transaction number (optional, for logging)
+
 # Constraints:
 #  nil
 #
@@ -246,6 +250,7 @@ sub get()
 {
    my $this = shift;
    my $absoluteURL = shift;
+   my $transactionNo = shift;
       
    my $userAgent;  # LWP::UserAgent
    my $request;    # HTTP::Request
@@ -272,7 +277,7 @@ sub get()
 
    if ($LOG_TRANSACTIONS)
    {
-      $this->saveTransactionLog();
+      $this->saveTransactionLog($transactionNo);
    }   
    
    #23 May 2004 - get the updated cookie jar
@@ -310,6 +315,8 @@ sub get()
 # Parameters:
 #  STRING absoluteURL to get
 #  reference to hash of POST parameters
+#  integer transaction number (optional, for logging)
+
 #
 # Constraints:
 #  nil
@@ -327,6 +334,7 @@ sub post()
    my $this = shift;
    my $absoluteURL = shift;
    my $parametersRef = shift;
+   my $transactionNo = shift;
   
    my $userAgent;  # LWP::UserAgent
    my $request;    # HTTP::Request
@@ -372,7 +380,7 @@ sub post()
    
    if ($LOG_TRANSACTIONS)     
    {
-      $this->saveTransactionLog();
+      $this->saveTransactionLog($transactionNo);
    }   
    
    #23 May 2004 - get the updated cookie jar
@@ -520,7 +528,7 @@ sub responseCode()
 #  Debugging
 #
 # Parametrs:
-#  STRING absoluteURL to get
+#  integer transactionNo (optional)
 #
 # Constraints:
 #  nil
@@ -536,7 +544,8 @@ sub saveTransactionLog()
 
 {
    my $this = shift;
- 
+   my $transactionNo = shift;
+   
    my $requestRef = $this->{'requestRef'};
    my $responseRef = $this->{'responseRef'};
    my $sessionName = $this->{'sessionName'};
@@ -550,7 +559,7 @@ sub saveTransactionLog()
    open(SESSION_FILE, ">>logs/$sessionFileName") || print "Can't open file: $!"; 
            
    print SESSION_FILE "\n\n\n<!-------------- TRANSACTION START ------------------>\n";           
-   print SESSION_FILE "\n<transaction name='$sessionName' year='$year' mon='$mon' mday='$mday' hour='$hour' min='$min' sec='$sec'>\n";
+   print SESSION_FILE "\n<transaction instance='$sessionName' count='$transactionNo' year='$year' mon='$mon' mday='$mday' hour='$hour' min='$min' sec='$sec'>\n";
    print SESSION_FILE "<request>\n";   
    print SESSION_FILE $requestRef->as_string();
    print SESSION_FILE "</request>\n";

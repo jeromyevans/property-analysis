@@ -12,6 +12,7 @@
 #  to support searches like get records 'still advertised'
 #
 #  11 July 2004 - modified to support domain.com.au
+#  25 July 2004 - added support for instanceID and transactionNo parameters in parser callbacks
 #
 # To do:
 #  - front page for monitoring progress
@@ -90,6 +91,7 @@ my $dropTables = 0;
 my $continueSession = 0;
 my $statusPort = undef;
 my $state;
+my $city;
 
 # these two parameters are used to limit the letter range of suburbs processed
 # by this instance of the application
@@ -111,7 +113,15 @@ if (!$agent)
    $agent = "GetAdvertisedSales_Domain";
 }
 
-my $printLogger = PrintLogger::new($agent, $agent.".stdout", 1, $useText, $useHTML);
+# 25 July 2004 - generate an instance ID based on current time and a random number.  The instance ID is 
+   # used in the name of the logfile
+my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
+$year += 1900;
+$mon++;
+my $randNo = rand 1000;
+my $instanceID = sprintf("%s_%4i%02i%02i%02i%02i%02i_%04i", $agent, $year, $mon, $mday, $hour, $min, $sec, $randNo);
+   
+my $printLogger = PrintLogger::new($agent, $instanceID.".stdout", 1, $useText, $useHTML);
 my $statusServer;
 
 $printLogger->printHeader("$agent\n");
@@ -125,7 +135,7 @@ if (!$parameters{'url'})
    $printLogger->print("   main: Configuration file not found\n");
 }
 
-if (($parseSuccess) && ($parameters{'url'}) && ($state))
+if (($parseSuccess) && ($parameters{'url'}) && ($state) && ($city))
 {
    
    ($sqlClient, $advertisedSaleProfiles) = initialiseTableObjects();
@@ -135,20 +145,14 @@ if (($parseSuccess) && ($parameters{'url'}) && ($state))
    
    $myParsers{"ChooseState"} = \&parseChooseState;
    $myParsers{"ChooseRegions"} = \&parseChooseRegions;
-   $myParsers{"ChooseSuburbs"} = \&parseChooseSuburbs;
-   
-   $myParsers{"SearchResults"} = \&parseSearchResults;
-   
-   #$myParsers{"searchdetails"} = \&parseSearchDetails;
-   
-   #$myParsers{"searchquery"} = \&parseSearchQuery;
-   #$myParsers{"searchlist"} = \&parseSearchList;
-   #$myParsers{"CGIPostTest"} = \&parseDisplayResponse;   
-
-   my $myDocumentReader = DocumentReader::new($agent, $parameters{'url'}, $sqlClient, 
+   $myParsers{"ChooseSuburbs"} = \&parseChooseSuburbs;   
+   $myParsers{"SearchResults"} = \&parseSearchResults;   
+   $myParsers{"property="} = \&parsePropertyDetails;
+  
+   my $myDocumentReader = DocumentReader::new($agent, $instanceID, $parameters{'url'}, $sqlClient, 
       \%myTableObjects, \%myParsers, $printLogger);
 
-   $myDocumentReader->setProxy("http://localhost:8080");
+   #$myDocumentReader->setProxy("http://localhost:8080");
    $myDocumentReader->run($createTables, $startSession, $continueSession, $dropTables);
  
 }
@@ -201,69 +205,153 @@ sub extractSaleProfile
    # --- set start constraint to the 3rd table (table 2) on the page - this is table
    # --- across the top that MAY contain a title and description
                
-   $htmlSyntaxTree->setSearchConstraintsByTable(2);
-   $htmlSyntaxTree->setSearchEndConstraintByTag("td"); # until the next table
-                    
-   $IDSuburbPrice = $htmlSyntaxTree->getNextText();    # always set
+   $htmlSyntaxTree->setSearchStartConstraintByText("E-mail me similar properties");
+   $htmlSyntaxTree->setSearchEndConstraintByText("Agent Details"); 
    
-   #--- followed by optional 'under offer' - ignored
+   # extract the suburb name from the URL.  This is the easiest place to get it as it's used in the
+   # path and has spaces replaced with an underscore.  
+   @wordList = split(/\//, $url);   # split on /
+   # second last word is always suburb name
+   $length = @wordList;
+   $suburb = $wordList[$length-2];
+   # replace underscore(s) with space character
+   $suburb =~ s/_/ /g;
    
-   $htmlSyntaxTree->setSearchStartConstraintByTag("tr");  # next row of table   
-   $htmlSyntaxTree->setSearchEndConstraintByTag("table");    
-   $title = $htmlSyntaxTree->getNextText();            # sometimes undef     
+   $sourceID =~ s/[^0-9]//gi;
+                 
+   $addressString = $htmlSyntaxTree->getNextText();    # always set, but may not contain the address (just the suburb/town)   
    
-   $description = $htmlSyntaxTree->getNextText();      # sometimes undef
-   
-   ($sourceID, $suburb, $priceLower, $priceHigher) = split /\-/, $IDSuburbPrice;
-   
-   # --- set start constraint to the 4th table on the page - this is table
-   # --- to the right of the image that contains parameters for the property   
-   $htmlSyntaxTree->setSearchConstraintsByTable(3);
-   $htmlSyntaxTree->setSearchEndConstraintByTag("table"); # until the next table
-   
-   $type = $htmlSyntaxTree->getNextText();             # always set
-   
-   $bedrooms = $htmlSyntaxTree->getNextTextContainingPattern("Bedrooms");    # sometimes undef  
-   ($bedrooms) = split(/ /, $bedrooms);   
-   $bathrooms = $htmlSyntaxTree->getNextTextContainingPattern("Bath");       # sometimes undef
-   ($bathrooms) = split(/ /, $bathrooms);
-   $land = $htmlSyntaxTree->getNextTextContainingPattern("sqm");             # sometimes undef
-   ($crud, $land) = split(/:/, $land);   
-   $yearBuilt = $htmlSyntaxTree->getNextTextContainingPattern("Age:");      # sometimes undef
-   ($crud, $yearBuilt) = split(/:/, $yearBuilt);
-   
-   # --- set the start constraint back to the top of the page and tje "for More info" label
-   $htmlSyntaxTree->resetSearchConstraints();
-            
-   $addressString = $htmlSyntaxTree->getNextTextAfterPattern("Address:");
-   ($streetNumber, $street) = split(/ /, $addressString, 2);
-   
-   $city = $htmlSyntaxTree->getNextTextAfterPattern("City:");
-   $zone = $htmlSyntaxTree->getNextTextAfterPattern("Zone:");        
-   
-   $htmlSyntaxTree->setSearchStartConstraintByTag("blockquote");
-   $htmlSyntaxTree->setSearchEndConstraintByText("For More Information");
-      
-   $features = $htmlSyntaxTree->getNextText();                       # sometimes undef
-   $features .= $htmlSyntaxTree->getNextText();
-   $features .= $htmlSyntaxTree->getNextText();
-   $features .= $htmlSyntaxTree->getNextText();
-   # ------ now parse the extracted values ----
-   
-   $priceLower =~ s/ //gi;   # remove space in the number if exist
-   $priceHigher =~ s/ //gi;  # remove space in the number if exist
-   $sourceID =~ s/ //gi;     # remove spaces if exist
-   
-   # substitute trailing whitespace characters with blank
-   # s/whitespace from end-of-line/all occurances
-   # s/\s*$//g;      
-   $suburb =~ s/\s*$//g;
+   # the last word(s) are ALWAYS the suburb name.  As this is known, drop it to leave just street & street number
+   # notes on the regular expression:
+   #  \b is used to match only the whole word
+   #  $ at the end of the expression ensures it matches only at the end of the pattern (this overcomes the case where the
+   #  suburb name is also in the street name
+   $addressString =~ s/\b$suburb\b$//i;
 
-   # substitute leading whitespace characters with blank
-   # s/whitespace from start-of-line,multiple single characters/blank/all occurances
-   #s/^\s*//g;    
-   $suburb =~ s/^\s*//g;
+   $street= undef;
+   $streetNumber = undef;
+   @wordList = split(/ /, $addressString);   # parse one word at a time 
+   # the street number and street can be a variable number of words.  It's very annony to split.
+   # best method seems to be to allocate all words LEFT of (and including) a numeral to the number, and the
+   # balance to the street name
+   # note: if no numerals are encountered, then the entire string is street name
+   # TO DO: an improvement may be to look for recognised 'street types'
+   $index = 0;
+   $lastNumeralWord = -1;
+   $length = @wordList;
+   foreach (@wordList)
+   {
+      if ($_)
+      {
+         # if this word contains a numeral
+         if ($_ =~ /[0-9]/)
+         {
+            $lastNumeralWord = $index;
+         }
+      }
+      $index++;
+      
+   }
+   #print "lastNumeralAt $lastNumeralWord\n";
+   if ($lastNumeralWord >= 0)
+   {
+      for ($index = 0; $index <= $lastNumeralWord; $index++)
+      {
+         $streetNumber .= $wordList[$index]." ";
+      }
+      
+      # place the balance of the word list into the street name
+      for ($index = $lastNumeralWord+1; $index < $length; $index++)
+      {
+         $street .= $wordList[$index]." ";
+      }
+   }
+   else
+   {
+      # no street number encountered - allocate entirely to street name
+      $street = $addressString;
+   }
    
+   $streetNumber = $documentReader->trimWhitespace($streetNumber);
+   $street = $documentReader->trimWhitespace($street);
+   
+   $priceString = $htmlSyntaxTree->getNextTextAfterPattern("Price:");
+   # price string is sometimes lower followed by a dash then price upper
+   ($priceLowerString, $priceUpperString) = split(/-/, $priceString, 2);
+   #print "priceLowerString = $priceLowerString\n";
+   #print "priceUpperString = $priceUpperString\n";
+   $priceLower = $documentReader->strictNumber($documentReader->parseNumberSomewhereInString($priceLowerString));
+   $priceUpper = $documentReader->strictNumber($documentReader->parseNumberSomewhereInString($priceUpperString));
+   
+   $infoString = $documentReader->trimWhitespace($htmlSyntaxTree->getNextTextAfterPattern("Property Details"));  # always set (contains at least TYPE)
+   
+   $bedroomsString = undef;
+   $bathroomsString = undef;
+   
+   # type is the first word
+   @wordList = split(/ /, $infoString);
+   $type = $documentReader->trimWhitespace($wordList[0]);
+   # 'x' bedrooms
+   # 'y' bathrooms
+   $index = 0;
+   foreach (@wordList)
+   {
+      if ($_)
+      {
+         # if this is the bedrooms word, the preceeding word is the number of them
+         if ($_ =~ /bedroom/i)
+         {
+            if ($index > 0)
+            {              
+               $bedroomsString = $wordList[$index-1];
+            }
+         }
+         else
+         {
+            # if this is the bedrooms word, the preceeding word is the number of them
+            if ($_ =~ /bathroom/i)
+            {
+               if ($index > 0)
+               {
+                  $bathroomsString = $wordList[$index-1];
+               }
+            }
+         }
+      }
+      $index++;
+   }
+   
+   $bedrooms = $documentReader->strictNumber($documentReader->parseNumber($bedroomsString));
+   $bathrooms = $documentReader->strictNumber($documentReader->parseNumber($bathroomsString));
+   
+   $landArea = $htmlSyntaxTree->getNextTextAfterPattern("area:");  # optional
+   $land = $documentReader->strictNumber($documentReader->parseNumber($landArea));
+   
+   $title = $htmlSyntaxTree->getNextTextAfterPattern("Description");
+   $description = $documentReader->trimWhitespace($htmlSyntaxTree->getNextText());
+   
+   $htmlSyntaxTree->resetSearchConstraints();
+   if (($htmlSyntaxTree->setSearchStartConstraintByText("Features")) && ($htmlSyntaxTree->setSearchEndConstraintByText("Description")))
+   {
+      # append all text in the features section
+      $features = undef;
+      while ($nextFeature = $htmlSyntaxTree->getNextText())
+      {
+         if ($features)
+         {
+            $features .= ", ";
+         }
+         
+         $features .= $nextFeature;
+      }
+      $features = $documentReader->trimWhitespace($features);
+      
+   }
+   
+   # remove non-numeric characters from the string occuring before the question mark to get source ID
+   ($sourceID, $crud) = split(/\?/, $url, 2);            
+   $sourceID =~ s/[^0-9]//gi;
+              
    $saleProfile{'SourceID'} = $sourceID;      
    
    if ($suburb) 
@@ -271,9 +359,9 @@ sub extractSaleProfile
       $saleProfile{'SuburbName'} = $suburb;
    }
    
-   if ($priceHigher) 
+   if ($priceUpper) 
    {
-      $saleProfile{'AdvertisedPriceUpper'} = $documentReader->parseNumber($priceHigher);
+      $saleProfile{'AdvertisedPriceUpper'} = $documentReader->parseNumber($priceUpper);
    }
    
    if ($priceLower) 
@@ -338,7 +426,7 @@ sub extractSaleProfile
 }
 
 # -------------------------------------------------------------------------------------------------
-# parseSearchDetails
+# parsePropertyDetails
 # parses the htmlsyntaxtree to extract advertised sale information and insert it into the database
 #
 # Purpose:
@@ -358,12 +446,14 @@ sub extractSaleProfile
 # Returns:
 #  a list of HTTP transactions or URL's.
 #    
-sub parseSearchDetails
+sub parsePropertyDetails
 
 {	
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
    my $url = shift;
+   my $instanceID = shift;
+   my $transactionNo = shift;
    
    my $sqlClient = $documentReader->getSQLClient();
    my $tablesRef = $documentReader->getTableObjects();
@@ -372,40 +462,46 @@ sub parseSearchDetails
    
    my %saleProfiles;
    my $checksum;   
-   $printLogger->print("in parseSearchDetails\n");
+   $printLogger->print("in parsePropertyDetails\n");
    
-   # --- now extract the property information for this page ---
-   #if ($htmlSyntaxTree->containsTextPattern("Suburb Profile"))
-   #{                                    
-   # parse the HTML Syntax tree to obtain the advertised sale information
-   %saleProfiles = extractSaleProfile($documentReader, $htmlSyntaxTree, $url);                  
+   
+   if ($htmlSyntaxTree->containsTextPattern("Property Details"))
+   {
+                                         
+      # parse the HTML Syntax tree to obtain the advertised sale information
+      %saleProfiles = extractSaleProfile($documentReader, $htmlSyntaxTree, $url);                  
             
-   # calculate a checksum for the information - the checksum is used to approximately 
-   # identify the uniqueness of the data
-   $checksum = $documentReader->calculateChecksum(\%saleProfiles);
-         
-   $printLogger->print("   parseSearchDetails: extracted checksum = ", $checksum, ". Checking log...\n");
-          
-   if ($sqlClient->connect())
-   {		 	 
-      # check if the log already contains this checksum - if it does, assume the tuple already exists                  
-      if ($advertisedSaleProfiles->checkIfTupleExists($SOURCE_NAME, $saleProfiles{'SourceID'}, $checksum, $saleProfiles{'AdvertisedPriceLower'}))
-	   {
-         # this tuple has been previously extracted - it can be dropped
-         # record that it was encountered again
-         $printLogger->print("   parseSearchDetails: identical record already encountered at $SOURCE_NAME.\n");
-	      $advertisedSaleProfiles->addEncounterRecord($SOURCE_NAME, $saleProfiles{'SourceID'}, $checksum);
+      # calculate a checksum for the information - the checksum is used to approximately 
+      # identify the uniqueness of the data
+      $checksum = $documentReader->calculateChecksum(\%saleProfiles);
+            
+      $printLogger->print("   parsePropertyDetails: extracted checksum = ", $checksum, ". Checking log...\n");
+             
+      if ($sqlClient->connect())
+      {		 	 
+         # check if the log already contains this checksum - if it does, assume the tuple already exists                  
+         if ($advertisedSaleProfiles->checkIfTupleExists($SOURCE_NAME, $saleProfiles{'SourceID'}, $checksum, $saleProfiles{'AdvertisedPriceLower'}))
+         {
+            # this tuple has been previously extracted - it can be dropped
+            # record that it was encountered again
+            $printLogger->print("   parsePropertyDetails: identical record already encountered at $SOURCE_NAME.\n");
+            $advertisedSaleProfiles->addEncounterRecord($SOURCE_NAME, $saleProfiles{'SourceID'}, $checksum);
+         }
+         else
+         {
+            $printLogger->print("   parsePropertyDetails: unique checksum/url - adding new record.\n");
+            # this tuple has never been extracted before - add it to the database
+            $advertisedSaleProfiles->addRecord($SOURCE_NAME, \%saleProfiles, $url, $checksum, $instanceID, $transactionNo);         
+         }
       }
       else
       {
-         $printLogger->print("   parseSearchDetails: unique checksum/url - adding new record.\n");
-         # this tuple has never been extracted before - add it to the database
-         $advertisedSaleProfiles->addRecord($SOURCE_NAME, \%saleProfiles, $url, $checksum);         
+         $printLogger->print("   parsePropertyDetails:", $sqlClient->lastErrorMessage(), "\n");
       }
    }
    else
    {
-      $printLogger->print("   parseSearchDetails:", $sqlClient->lastErrorMessage(), "\n");
+      $printLogger->print("   parsePropertyDetails:property details not found.\n");      
    }
    
    
@@ -440,6 +536,9 @@ sub parseChooseSuburbs
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
    my $url = shift;
+   my $instanceID = shift;
+   my $transactionNo = shift;
+   
    my $htmlForm;
    my $actionURL;
    my $httpTransaction;
@@ -457,7 +556,7 @@ sub parseChooseSuburbs
        
       if ($htmlForm)
       {       
-         $actionURL = new URI::URL($htmlForm->getAction(), $url)->abs();
+         $actionURL = new URI::URL($htmlForm->getAction(), $parameters{'url'})->abs();
               
          %defaultPostParameters = $htmlForm->getPostParameters();            
          
@@ -475,7 +574,7 @@ sub parseChooseSuburbs
                }
                else
                {
-                  print $_->{'value'}, "\n";
+                  #print $_->{'value'}, "\n";
                   # create a duplicate of the default post parameters
                   my %newPostParameters = %defaultPostParameters;            
                   # and set the value to this option in the selection
@@ -489,11 +588,11 @@ sub parseChooseSuburbs
                      # if the start letter is defined, use it to constrain the range of 
                      # suburbs processed
                      # if the first letter if less than the start then reject               
-                     if ($_->{'text'} lt $startLetter)
+                     if ($_->{'text'} le $startLetter)
                      {
                         # out of range
                         $acceptSuburb = 0;
-                      #  print "out of start range\n";
+                   #     print "out of start range\n";
                      }                              
                   }
                              
@@ -502,11 +601,11 @@ sub parseChooseSuburbs
                      # if the end letter is defined, use it to constrain the range of 
                      # suburbs processed
                      # if the first letter is greater than the end then reject       
-                     if ($_->{'text'} gt $endLetter)
+                     if ($_->{'text'} ge $endLetter)
                      {
                         # out of range
                         $acceptSuburb = 0;
-                      #  print "out of end range\n";
+                   #     print "out of end range\n";
                      }               
                   }
                         
@@ -525,8 +624,7 @@ sub parseChooseSuburbs
          
          $printLogger->print("   ParseChooseSuburbs:Creating a transaction for $noOfTransactions suburbs...\n");                             
       }	  
-      else 
-      
+      else       
       {
          $printLogger->print("   parseChooseSuburbs:Search form not found.\n");
       }
@@ -595,11 +693,16 @@ sub parseChooseRegions
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
    my $url = shift;
+   my $instanceID = shift;
+   my $transactionNo = shift;
    my $htmlForm;
    my $actionURL;
    my $httpTransaction;
    my $anchor;
-      
+   my @transactionList;
+   my $noOfTransactions = 0;
+   
+   
    $printLogger->print("in parseChooseRegions\n");
     
     
@@ -612,23 +715,32 @@ sub parseChooseRegions
       #$htmlSyntaxTree->printText();     
       if ($htmlForm)
       {       
-         $actionURL = new URI::URL($htmlForm->getAction(), $url)->abs();
-         print "actionURL = $actionURL\n"; 
+         $actualAction = $htmlForm->getAction();
+         $actionURL = new URI::URL($htmlForm->getAction(), $parameters{'url'})->abs();
+          
          # get all of the checkboxes and set them
          $checkboxListRef = $htmlForm->getCheckboxes();
-        
+               
          foreach (@$checkboxListRef)
-         {     
+         {                 
             # $_ is a reference to an HTMLFormCheckbox
             # set this checkbox input to true
             $htmlForm->setInputValue($_->getName(), 'on');
+            
+            # create a transaction for only this checkbox selected
+            my %postParameters = $htmlForm->getPostParameters();
+            #DebugTools::printHash("$noOfTransactions", \%postParameters);
+            my $newHTTPTransaction = HTTPTransaction::new($actionURL, 'POST', \%postParameters, $url);                                           
+            # add this new transaction to the list to return for processing
+            $transactionList[$noOfTransactions] = $newHTTPTransaction;
+            $noOfTransactions++;
+             
+            # clear the checkbox value before the next post
+            $htmlForm->clearInputValue($_->getName());
          }
   
-         %postParameters = $htmlForm->getPostParameters();
-        
-         #DebugTools::printHash("postParameters", \%postParameters);
-         $printLogger->print("   parseChooseRegions: returning POST transaction selecting all checkboxes.\n");
-         $httpTransaction = HTTPTransaction::new($actionURL, 'POST', \%postParameters, $url);            
+         $printLogger->print("   parseChooseRegions: returning a POST transaction for each checkbox...\n");
+                     
       }	  
       else 
       {
@@ -649,15 +761,18 @@ sub parseChooseRegions
          {
             $printLogger->print("   following anchor 'here'\n");
             $httpTransaction = HTTPTransaction::new($anchor, 'GET', undef, $url);
+       
+            $transactionList[$noOfTransactions] = $httpTransaction;
+            $noOfTransactions++;
          }
          
          #$htmlSyntaxTree->printText();
       }
    }
    
-   if ($httpTransaction)
+   if ($noOfTransactions > 0)
    {
-      return ($httpTransaction);
+      return @transactionList;
    }
    else
    {      
@@ -693,11 +808,12 @@ sub parseChooseState
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
    my $url = shift;         
+   my $instanceID = shift;
+   my $transactionNo = shift;
    my @anchors;
    
    # --- now extract the property information for this page ---
    $printLogger->print("inParseChooseState:\n");
-   
    if ($htmlSyntaxTree->containsTextPattern("State Search"))
    { 
       $htmlSyntaxTree->setSearchStartConstraintByText("search by region");
@@ -756,6 +872,8 @@ sub parseSearchResults
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
    my $url = shift;    
+   my $instanceID = shift;
+   my $transactionNo = shift;
    my @urlList;        
    my $firstRun = 1;
    
@@ -817,12 +935,12 @@ sub parseSearchResults
       }         
          
       # now get the anchor for the NEXT button if it's defined 
-      $nextButtonListRef = $htmlSyntaxTree->getNextAnchorContainingPattern("Next Page");
+      $nextButton = $htmlSyntaxTree->getNextAnchorContainingPattern("Next Page");
                     
-      if ($nextButtonListRef)
+      if ($nextButton)
       {            
          $printLogger->print("   parseSearchResults: list includes a 'next' button anchor...\n");
-         @anchorsList = (@urlList, $$nextButtonListRef[0]);
+         @anchorsList = (@urlList, $nextButton);
       }
       else
       {            
@@ -833,35 +951,17 @@ sub parseSearchResults
       $length = @anchorsList;         
       $printLogger->print("   parseSearchResults: following $length anchors...\n");               
    }	  
-   else 
+   else
    {
-      # for some dodgy reason the action for the form above actually comes back to the same page, put returns
-      # a STATUS 302 object has been moved message, pointing to an alternative page.  Seems like a hack
-      # to overcome a problem with their server.  I don't know why they don't just post to a different address, but anyway,
-      # this code detects the object not found message and follows the alternative URL
-      if ($htmlSyntaxTree->containsTextPattern("Object moved"))
-      {
-         $printLogger->print("   parseSearchResults: following object moved redirection...\n");
-         $anchor = $htmlSyntaxTree->getNextAnchorContainingPattern("here");
-         if ($anchor)
-         {
-            $printLogger->print("   following anchor 'here'\n");
-            $httpTransaction = HTTPTransaction::new($anchor, 'GET', undef, $url);
-         }
-         
-      }
-      else
-      {
-         $printLogger->print("   parseSearchResults: pattern not found\n");
-      }
+      $printLogger->print("   parseSearchResults: pattern not found\n");   
    }
    
    # return the list or anchors or empty list   
-   #if ($housesListRef)
-   #{      
-   #   return @anchorsList;
-   #}
-   #else
+   if ($length > 0)
+   {      
+      return @anchorsList;
+   }
+   else
    {      
       $printLogger->print("   parseSearchList: returning empty anchor list.\n");
       return @emptyList;
@@ -896,6 +996,8 @@ sub parseDisplayResponse
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
    my $url = shift;         
+   my $instanceID = shift;   
+   my $transactionNo = shift;
    my @anchors;
    
    # --- now extract the property information for this page ---
@@ -960,6 +1062,7 @@ sub parseParameters
    $agent = param("agent");
    $statusPort = param("port");
    $state = param("state");
+   $city = param("city");
    
    if (($createTables) || ($startSession) || ($continueSession) || ($dropTables))
    {

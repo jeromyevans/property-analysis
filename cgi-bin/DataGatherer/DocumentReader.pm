@@ -22,6 +22,17 @@
 #                            - added full HTTP logging                  
 #              29 April 2004 - added support for PrintLogger
 #              10 July 2004 - added trimWhitespace function
+#              15 July 2004 - added parseNumberSomewhereInString function.  This is same as parse number but returns the
+#   first number encountered anywhere in the string rather than looking at a particular word offset.
+#              25 July 2004 - changed initialisation so when using continue mode, if a session doesn't already exist then 
+#   a new session is started
+#                           - changed session filename to .session and removed unused first-line status information
+#                           - changed logfile name to contain a value representing the instance id (time based identifier).  
+#   The instanceID is stored in the database entries for tracking (with the unique transaction ID).  The two values provide
+#   an index into the HTTP log.  IMPORTANT CHANGE: instanceID and transactionNo are passed to the parser callback functions.
+#                           - added support for transaction number that's used to count the number of documents fetched
+#   by the document reader in this instance.  The transaction number is now stored in the database and HTTP log file
+#
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -53,6 +64,7 @@ my ($printLogger) = undef;
 #
 # Parameters:
 #  string session name (used for logging)
+#  string instance ID (used for logging)
 #  string base URL
 #  sqlClient - sql client to use
 #  tables ref - reference to a list of database tables
@@ -67,9 +79,10 @@ my ($printLogger) = undef;
 # Returns:
 #  DocumentReader object
 #    
-sub new ($ $ $ $ $ $)
+sub new ($ $ $ $ $ $ $)
 {
    my $sessionName = shift;
+   my $instanceID = shift;
    my $baseURL = shift;
    my $sqlClient = shift;   
    my $tablesHashRef = shift;   
@@ -84,7 +97,9 @@ sub new ($ $ $ $ $ $)
       sqlClient => $sqlClient,      
       tablesHashRef => $tablesHashRef,      
       parserHashRef => $parserHashRef,    
-      proxy => undef  
+      proxy => undef,
+      instanceID => $instanceID,
+      transactionNo => 0
    };               
    
    bless $documentReader;     
@@ -130,6 +145,52 @@ sub parseNumber
    $words[$wordIndex] =~ s/,|\$|%|\(|\)|\:|\||\;//g;
   
    return $words[$wordIndex];
+}
+
+# -------------------------------------------------------------------------------------------------
+# parseNumberSomewhereInString
+# extracts a number from the string provided as the first parameter
+# returns any number found in any word of the string
+# USE THIS FUNCTION WHEN IT'S IMPOSSIBLE TO KNOW WHERE IN THE SENTANCE THE NUMBER SHOULD
+# APPEAR (ie. not at a fixed word index)\
+
+# Purpose:
+#  parsing document text
+#
+# Parameters:
+#  word to search
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  Nil
+#
+# Returns:
+#   string containing the number
+#
+sub parseNumberSomewhereInString
+{
+   my $this = shift;
+   my $stringToParse = shift;
+   my $thisNumber = undef;
+   my $result = undef;
+   
+   @words = split(/\s+/, $stringToParse);
+   $length = @words;
+  
+   foreach (@words)
+   {
+      $thisNumber = $this->strictNumber($_);
+      
+      if ($thisNumber != '')
+      {
+         $result = $thisNumber;
+         last;
+      }
+   }
+   
+   return $result;
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -345,7 +406,7 @@ sub _loadSessionURLStack
 {
    my $this = shift;
    my @sessionURLstack;
-   my $sessionFileName = $this->{'sessionName'}.".log";
+   my $sessionFileName = $this->{'sessionName'}.".session";
    my $index = 0;
    my $httpTransaction;
    
@@ -354,9 +415,9 @@ sub _loadSessionURLStack
       open(SESSION_FILE, "<$sessionFileName") || print "Can't open list: $!"; 
          
       # read the first line of the file (session ID and status)
-      $firstLine = <SESSION_FILE>;
-      chomp;
-      ($sessionID, $sessionStatus) = split /\0/;
+      #$firstLine = <SESSION_FILE>;
+      #chomp;
+      #($sessionName, $sessionStatus) = split /\0/;
       
       $index = 0;
       # loop through the content of the file
@@ -410,14 +471,14 @@ sub _saveSessionURLStack
 {
    my $this = shift;
    my $sessionURLstackRef = shift;         
-   my $sessionFileName = $this->{'sessionName'}.".log";
+   my $sessionFileName = $this->{'sessionName'}.".session";
    my $length;
    my $url;
    my $method;
               	      
    open(SESSION_FILE, ">$sessionFileName") || print "Can't open list: $!"; 
            
-   print SESSION_FILE "$sessionID\0$sessionStatus\n";
+   #print SESSION_FILE "$sessionID\0$sessionStatus\n";
    
    # loop through all of the elements (in reverse so they can be read into a stack)
    foreach (@$sessionURLstackRef)      
@@ -541,7 +602,8 @@ sub _fetchDocument
       
       $httpClient->setReferer($nextTransaction->getReferer());
 
-      if ($httpClient->get($url))
+      
+      if ($httpClient->get($url, $this->{'transactionNo'}))
       {
          $processResponse = 1;
       }
@@ -549,6 +611,10 @@ sub _fetchDocument
       {
          $printLogger->print("failed ", $httpClient->responseCode(), "\n");
       }
+
+      # count the number of transactions performed this instance (this is used in the HTTP log)
+      $this->{'transactionNo'}++;
+      
       print "HTTP (GET) Response Code: ", $httpClient->responseCode(), "\n";
    }
    else
@@ -561,8 +627,8 @@ sub _fetchDocument
          $postParameters = $nextTransaction->getPostParameters();
          
          $httpClient->setReferer($nextTransaction->getReferer());                 
-         
-         if ($httpClient->post($url, $postParameters))
+               
+         if ($httpClient->post($url, $postParameters, $this->{'transactionNo'}))
          {
             $processResponse = 1;
          }
@@ -570,7 +636,10 @@ sub _fetchDocument
          {
             $printLogger->print("failed ", $httpClient->responseCode(), "\n");
          }   
-         
+      
+         # count the number of transactions performed this instance (this is used in the HTTP log)
+         $this->{'transactionNo'}++;
+      
          print "HTTP (POST) Response Code: ", $httpClient->responseCode(), "\n";
       }
    }
@@ -610,10 +679,9 @@ sub _parseDocument
    my $htmlSyntaxTree;
    my @frameList;
    my $absoluteURL;
-   my $httpTransaction;
    
-   my @newTransactionStack;     
-   my @callbackTransactionStack;
+   my @newTransactionStack;    
+   my $httpTransaction;
        
    my $url;
    my @frameClientList;
@@ -670,7 +738,7 @@ sub _parseDocument
    foreach (@frameClientList)
    {  
       $url = $_->getURL();
-      $printLogger->print("parsing document $url\n");
+      #$printLogger->print("parsing document $url\n");
       
       # for the very first element (the top window) don't need to parse
       # the content again - it was done already to determine if there's 
@@ -693,13 +761,14 @@ sub _parseDocument
 	         
 	   	# get the value from the hash with the pattern matching the callback function
 		   # the value in the cash is a code reference (to the callback function)		            
-		   $callbackFunction = $$parserHashRef{$parserPatternList[$parserIndex]};		  		  
-         @callbackTransactionStack = &$callbackFunction($this, $htmlSyntaxTree, $url);
+		   my $callbackFunction = $$parserHashRef{$parserPatternList[$parserIndex]};		  		  
+         my @callbackTransactionStack = &$callbackFunction($this, $htmlSyntaxTree, $url, $this->{'instanceID'}, $this->{'transactionNo'});
 		  
          # loop through the transactions in reverse so when they're pushed onto 
          # the stack the order is maintained for popping.
          foreach (reverse @callbackTransactionStack)
          {
+            
             # if this is a refence then it's an HTTPTransaction, otherwise
             #  it'ss a URL
             if (ref($_))
@@ -763,6 +832,8 @@ sub run
    my $nextURL;
    my @sessionURLStack;
    my @reversedArray;
+   my @newTransactionStack;
+   my $nextTransaction;
    
    my $maxURLsPerSession;
    my $currentIndex;
@@ -779,11 +850,24 @@ sub run
       $this->_createTables();
    }
 
+   # 25 July 2004 - start a new session in if continue is selected but a session doesn't exist
+   if (($startSession) || ($continueSession))
+   {
+      @sessionURLstack = $this->_loadSessionURLStack();
+
+      $stackSize = @sessionURLstack;
+      if (($stackSize == 0) && ($continueSession))
+      {
+         # there's no session to continue - start a new session
+         $startSession = 1;
+      }
+   }
+   
    if ($startSession)
    {
       $printLogger->print("--- starting new session ---\n");
    
-      $httpClient = HTTPClient::new($this->{'sessionName'});      
+      $httpClient = HTTPClient::new($this->{'instanceID'});      
       $httpClient->setProxy($this->{'proxy'});
       $httpClient->setUserAgent($DEFAULT_USER_AGENT);      
       $nextTransaction = HTTPTransaction::new($startURL, 'GET', undef, undef);
@@ -812,16 +896,15 @@ sub run
       # get the URL stack remaining for the session
       @sessionURLstack = $this->_loadSessionURLStack();
 
-      $httpClient = HTTPClient::new($this->{'sessionName'});         
+      $httpClient = HTTPClient::new($this->{'instanceID'});         
       $httpClient->setProxy($this->{'proxy'});
       $httpClient->setUserAgent($DEFAULT_USER_AGENT);
       $maxURLsPerSession = 0;
       $currentIndex = 0;
       $urlValid = 1;
+            
       while ((($currentIndex < $maxURLsPerSession) || ($maxURLsPerSession == 0)) && ($urlValid))
-      {
-	      $stackSize = @sessionURLstack;   
-   
+      {  
          $nextTransaction = pop @sessionURLstack;   
          
          # if the next URL is defined...

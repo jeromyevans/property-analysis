@@ -15,7 +15,8 @@
 #
 #   9 July 2004 - Merged with LogTable to record encounter information (date last encountered, url, checksum)
 #  to support searches like get records 'still advertised'
-#
+#   25 July 2004 - added support for instance ID and transactionNo
+
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -97,6 +98,8 @@ my $SQL_CREATE_TABLE_STATEMENT = "CREATE TABLE IF NOT EXISTS AdvertisedSaleProfi
     "SourceURL TEXT, ".
     "SourceID VARCHAR(20), ".
     "Checksum INTEGER, ".
+    "InstanceID TEXT, ".
+    "TransactionNo INTEGER, ".
     "Identifier INTEGER ZEROFILL PRIMARY KEY AUTO_INCREMENT, ".    
     "SuburbIdentifier INTEGER, ".
     "SuburbName TEXT, ".
@@ -146,6 +149,8 @@ sub createTable
 #  reference to a hash containing the values to insert
 #  string sourceURL
 #  integer checksum
+#  string instanceID
+#  integer transactionNo
 #
 # Constraints:
 #  nil
@@ -167,6 +172,8 @@ sub addRecord
    my $parametersRef = shift;
    my $url = shift;
    my $checksum = shift;
+   my $instanceID = shift;
+   my $transactionNo = shift;
    
    my $success = 0;
    my $sqlClient = $this->{'sqlClient'};
@@ -179,7 +186,7 @@ sub addRecord
       @columnNames = keys %$parametersRef;
       
       # modify the statement to specify each column value to set 
-      $appendString = "DateEntered, identifier, sourceName, sourceURL, checksum, ";
+      $appendString = "DateEntered, identifier, sourceName, sourceURL, checksum, instanceID, transactionNo, ";
       $index = 0;
       foreach (@columnNames)
       {
@@ -199,7 +206,8 @@ sub addRecord
       $index = 0;
       $quotedSource = $sqlClient->quote($sourceName);
       $quotedUrl = $sqlClient->quote($url);
-      $appendString = "localtime(), null, $quotedSource, $quotedUrl, $checksum, ";
+      $quotedInstance = $sqlClient->quote($instanceID);
+      $appendString = "localtime(), null, $quotedSource, $quotedUrl, $checksum, $quotedInstance, $transactionNo, ";
       foreach (@columnValues)
       {
          if ($index != 0)

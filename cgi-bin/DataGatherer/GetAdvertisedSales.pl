@@ -10,7 +10,8 @@
 #
 #   9 July 2004 - Merged with LogTable to record encounter information (date last encountered, url, checksum)
 #  to support searches like get records 'still advertised'
- 
+#  25 July 2004 - added support for instanceID and transactionNo parameters in parser callbacks
+
 #
 # To do:
 #  - front page for monitoring progress
@@ -105,7 +106,17 @@ if (!$agent)
    $agent = "GetAdvertisedSales";
 }
 
-my $printLogger = PrintLogger::new($agent, $agent.".stdout", 1, $useText, $useHTML);
+
+# 25 July 2004 - generate an instance ID based on current time and a random number.  The instance ID is 
+   # used in the name of the logfile
+my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
+$year += 1900;
+$mon++;
+my $randNo = rand 1000;
+my $instanceID = sprintf("%s_%4i%02i%02i%02i%02i%02i_%04i", $agent, $year, $mon, $mday, $hour, $min, $sec, $randNo);
+   
+   
+my $printLogger = PrintLogger::new($agent, $instanceID.".stdout", 1, $useText, $useHTML);
 my $statusServer;
 
 $printLogger->printHeader("$agent\n");
@@ -142,7 +153,7 @@ if (($parseSuccess) && ($parameters{'url'}))
    $myParsers{"searchlist"} = \&parseSearchList;
    $myParsers{"CGIPostTest"} = \&parseDisplayResponse;   
 
-   my $myDocumentReader = DocumentReader::new($agent, $parameters{'url'}, $sqlClient, 
+   my $myDocumentReader = DocumentReader::new($agent, $instanceID, $parameters{'url'}, $sqlClient, 
       \%myTableObjects, \%myParsers, $printLogger);
 
    #$myDocumentReader->setProxy("http://netcache.dsto.defence.gov.au:8080");
@@ -356,6 +367,8 @@ sub parseSearchDetails
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
    my $url = shift;
+   my $instanceID = shift;
+   my $transactionNo = shift;
    
    my $sqlClient = $documentReader->getSQLClient();
    my $tablesRef = $documentReader->getTableObjects();
@@ -392,7 +405,7 @@ sub parseSearchDetails
       {
          $printLogger->print("   parseSearchDetails: unique checksum/url - adding new record.\n");
          # this tuple has never been extracted before - add it to the database
-         $advertisedSaleProfiles->addRecord($SOURCE_NAME, \%saleProfiles, $url, $checksum);         
+         $advertisedSaleProfiles->addRecord($SOURCE_NAME, \%saleProfiles, $url, $checksum, $instanceID, $transactionNo);         
       }
    }
    else
@@ -434,6 +447,9 @@ sub parseSearchForm
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
    my $url = shift;
+   my $instanceID = shift;
+   my $transactionNo = shift;
+   
    my $htmlForm;
    my $actionURL;
    my $httpTransaction;
@@ -549,6 +565,9 @@ sub parseSearchQuery
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
    my $url = shift;
+   my $instanceID = shift;
+   my $transactionNo = shift;
+   
    my $htmlForm;
    my $actionURL;
    my $httpTransaction;
@@ -609,6 +628,9 @@ sub parseHomePage
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
    my $url = shift;         
+   my $instanceID = shift;   
+   my $transactionNo = shift;
+   
    my @anchors;
    
    # --- now extract the property information for this page ---
@@ -669,6 +691,9 @@ sub parseSearchList
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
    my $url = shift;    
+   my $instanceID = shift;
+   my $transactionNo = shift;
+   
    my @urlList;        
    my $firstRun = 1;
    
@@ -796,6 +821,8 @@ sub parseDisplayResponse
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
    my $url = shift;         
+   my $instanceID = shift;   
+   my $transactionNo = shift;
    my @anchors;
    
    # --- now extract the property information for this page ---

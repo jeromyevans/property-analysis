@@ -15,6 +15,8 @@
 #
 #   10 July 2004 - modified to combine with log table (added fields source URL, lastEncountered date etc)
 #     to support searches such as 'still advertised'
+#   25 July 2004 - added support for instance ID and transactionNo
+
 #
 # CONVENTIONS
 # _ indicates a private variable or method
@@ -87,6 +89,8 @@ my $SQL_CREATE_TABLE_STATEMENT = "CREATE TABLE IF NOT EXISTS AdvertisedRentalPro
     "SourceURL TEXT, ".
     "SourceID VARCHAR(20), ".
     "Checksum INTEGER, ".
+    "InstanceID TEXT, ".
+    "TransactionNo INTEGER, ".
     "Identifier INTEGER ZEROFILL PRIMARY KEY AUTO_INCREMENT, ".    
     "SuburbIdentifier INTEGER, ".
     "SuburbName TEXT, ".
@@ -166,7 +170,7 @@ sub addRecord
       @columnNames = keys %$parametersRef;
       
       # modify the statement to specify each column value to set 
-      $appendString = "DateEntered, identifier, sourceName, sourceURL, checksum, ";
+      $appendString = "DateEntered, identifier, sourceName, sourceURL, checksum, instanceID, transactionNo, ";
       $index = 0;
       foreach (@columnNames)
       {
@@ -186,7 +190,8 @@ sub addRecord
       $index = 0;
       $quotedSource = $sqlClient->quote($sourceName);
       $quotedUrl = $sqlClient->quote($url);
-      $appendString = "localtime(), null, $quotedSource, $quotedUrl, $checksum, ";
+      $quotedInstance = $sqlClient->quote($instanceID);
+      $appendString = "localtime(), null, $quotedSource, $quotedUrl, $checksum, $quotedInstance, $transactionNo, ";
       foreach (@columnValues)
       {
          if ($index != 0)

@@ -58,8 +58,15 @@
 #   the function above, but can be used to get a list of defined checkboxes for parsing (for instance,
 #   if the application wants to set or clear certain one automatically)
 # 11 July 2004 - added support for image INPUT type - sets x and y position to 1 in the parameters
-# 12 July 2003 - added getNextAnchor to get the next anchor following the last successful match
-#
+# 12 July 2004 - added getNextAnchor to get the next anchor following the last successful match
+# 18 July 2004 - had to modify the functions that set search constraints by a text pattern
+#   to use a temporary variable for the regular expression to overcome the expression failing
+#   to match correctly sometimes (cause unknown)
+#              - fixed bug in getNextAnchorContainingPattern that caused it to accept anchors
+#   outside the lastSearchConstraint and reject anchors after the firstSearchConstraint because
+#   it was checking the index of the tag start itself instead of the index of each text element
+#   inside the tag
+
 # Description:
 #   Module that accepts an HTTP::Response and runs a parser (HTTP:TreeBuilder)
 # over it to generate a SyntaxTree object.  The SyntaxTree class is designed for 
@@ -572,7 +579,7 @@ sub _treeBuilder_callBack
         # the tag element
         if ($this->{'_insideAnchor'})
         {
-           
+            
            # also add this element to the anchor's text element list           
            $textListLength = $this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}-1]{'textListLength'};
            $this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}-1]{'textListRef'}[$textListLength] = $this->{'elementListLength'};
@@ -652,7 +659,10 @@ sub containsTextPattern
          if ($_ <= $this->{'searchEndIndex'})         
          {                    
             # check if this text element contains the search pattern...         
-            if ($this->{'elementListRef'}[$_]{'string'} =~ /$searchPattern/gi)
+            # 18 July 2004 - for reasons unkown, on an occasion the regular expression wouldn't match
+            # unless the original string was placed in this temporary variable
+            $comparator = $this->{'elementListRef'}[$_]{'string'};
+            if ($comparator =~ /$searchPattern/gi)
             {         
                # found a match
                $found = 1;         
@@ -719,9 +729,12 @@ sub setSearchStartConstraintByText
       if ($_ >= $this->{'searchStartIndex'})
       {
          if ($_ <= $this->{'searchEndIndex'})         
-         {      
+         {  
+            # 18 July 2004 - for reasons unkown, on an occasion the regular expression wouldn't match
+            # unless the original string was placed in this temporary variable
+            $comparator = $this->{'elementListRef'}[$_]{'string'};
             # check if this text element contains the search pattern...
-            if ($this->{'elementListRef'}[$_]{'string'} =~ /$searchPattern/gi)
+            if ($comparator =~ /$searchPattern/gi)
             {         
                # found a match
                $found = 1;         
@@ -730,8 +743,8 @@ sub setSearchStartConstraintByText
                # the element list - this is found through the textElementIndex            
                # (get the index of this element in the textElementIndex, and obtain
                # the index of the next text element from there)                                              
-               $sourceTextIndex = $this->{'elementListRef'}[$_]{'textElementIndex'};              
-               $nextTextIndex = $this->{'textElementIndexRef'}[$sourceTextIndex+1];                 
+               $sourceTextIndex = $this->{'elementListRef'}[$_]{'textElementIndex'};
+               $nextTextIndex = $this->{'textElementIndexRef'}[$sourceTextIndex+1];
                $this->{'searchStartIndex'} = $nextTextIndex;
                
                # record the index where this item was found
@@ -793,18 +806,20 @@ sub setSearchEndConstraintByText
       # this is a bit of a hack because foreach couldn't be used on the
       # textElementIndexRef.  Get the current index into the elementList
       $_ = $this->{'textElementIndexRef'}[$textIndex];
-      
+            
       # only search within the bounds of the search constraints
       if ($_ >= $this->{'searchStartIndex'})
-      {
+      {                         
          if ($_ <= $this->{'searchEndIndex'})         
-         {         
+         {
+            # 18 July 2004 - for reasons unkown, on an occasion the regular expression wouldn't match
+            # unless the original string was placed in this temporary variable
+            $comparator = $this->{'elementListRef'}[$_]{'string'};
             # check if this text element contains the search pattern...
-            if ($this->{'elementListRef'}[$_]{'string'} =~ /$searchPattern/gi)
+            if ($comparator =~ /$searchPattern/gi)
             {         
                # found a match
                $found = 1;         
-               
                # need to set the searchEndIndex to the previous TEXT element in 
                # the element list - this is found through the textElementIndex            
                # (get the index of this element in the textElementIndex, and obtain
@@ -812,16 +827,17 @@ sub setSearchEndConstraintByText
                $sourceTextIndex = $this->{'elementListRef'}[$_]{'textElementIndex'};
                $previousTextIndex = $this->{'textElementIndexRef'}[$sourceTextIndex-1];               
                $this->{'searchEndIndex'} = $previousTextIndex;
-                              
+                                
                # record the index where this item was found
                #$this->{'lastFoundIndex'} = $previousTextIndex;               
                last;  # break out of the foreach loop
             }
          }
+      
          else
          {
             # gone further than the end of the search constraint - break out now
-            last;
+            last;      
          }
       }
    }
@@ -1388,29 +1404,23 @@ sub getNextAnchorContainingPattern
    
    # loop through all of the anchor elements in the page      
    for ($anchorIndex = 0; $anchorIndex < $this->{'anchorElementIndexLength'}; $anchorIndex++)   
-   {   
-      # this is a bit of a hack because foreach couldn't be used on the
-      # anchorElementIndexRef.  Get the current index into the elementList
-      $_ = $this->{'anchorElementIndexRef'}[$anchorIndex]{'elementIndex'};
-                      
-      # only search within the bounds of the search constraints
-      if ($_ >= $this->{'searchStartIndex'}) 
+   {         
+      # get the index of the tag in the element list
+      $elementIndex = $this->{'anchorElementIndexRef'}[$anchorIndex]{'elementIndex'};
+       
+      # if this anchor has at least one text element
+      if ($this->{'anchorElementIndexRef'}[$anchorIndex]{'textListLength'} > 0)
       {
-         if ($_ <= $this->{'searchEndIndex'})         
+           
+         # loop for all of the text elements
+         $listRef = $this->{'anchorElementIndexRef'}[$anchorIndex]{'textListRef'};
+         #print "textListRef: $listRef\n"; 
+         foreach (@$listRef)
          {
-            $elementIndex = $_; 
-            
-            # check if this tag contains any text elements             
-            $textListLength = $this->{'anchorElementIndexRef'}[$anchorIndex]{'textListLength'};                                          
-                        
-            if ($textListLength > 0)
-            {              
-               # loop for all of the text elements
-               $listRef = $this->{'anchorElementIndexRef'}[$anchorIndex]{'textListRef'};
-               #print "textListRef: $listRef\n"; 
-               foreach (@$listRef)
+            if ($_ >= $this->{'searchStartIndex'}) 
+            {
+               if ($_ <= $this->{'searchEndIndex'})         
                {                          
-                  #print "   ", $this->{'elementListRef'}[$_]{'string'}, "\n";
                   # $_ is the index of the text element in the element list
                   # this is text - see if it contains the pattern                  
                   if ($this->{'elementListRef'}[$_]{'string'} =~ /$searchPattern/gi)
@@ -1419,15 +1429,15 @@ sub getNextAnchorContainingPattern
                      $url = $this->{'elementListRef'}[$elementIndex]{'href'};                     
                      last;                           
                   }
-                  
-               }               
-            }                                                      
-         }
-         else
-         {
-            # gone further than the end of the search constraint - break out now
-            last;
-         }
+               }
+               else
+               {
+                  # gone further than the last search constraint
+                  last;
+               }
+            }
+         }                                                      
+              
       }
    }      
       

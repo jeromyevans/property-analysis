@@ -5,6 +5,8 @@
 #
 # 16 May 04 - bugfix wasn't using parameters{'url'} as start URL
 #
+#  25 July 2004 - added support for instanceID parameter in parser callbacks
+
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -154,6 +156,7 @@ sub parseSuburbLetters
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
    my $url = shift;
+   my $instanceID = shift;
    
    $printLogger->print("parseSuburbLetters()\n");
    if ($htmlSyntaxTree->containsTextPattern("Suburb Profile"))
@@ -214,6 +217,7 @@ sub parseSuburbNames
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
    my $url = shift;
+   my $instanceID = shift;
    
    $printLogger->print("parseSuburbNames()\n");
    if ($htmlSyntaxTree->containsTextPattern("Suburb Profile"))
@@ -336,6 +340,7 @@ sub parseSuburbProfilePage
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
    my $url = shift;
+   my $instanceID = shift;
    
    my $sqlClient = $documentReader->getSQLClient();
    my $tablesRef = $documentReader->getTableObjects();
@@ -417,6 +422,7 @@ sub parseHomePage
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
    my $url = shift;         
+   my $instanceID = shift;
    my @anchors;
    
    # --- now extract the property information for this page ---

@@ -10,6 +10,7 @@
 # if no default value is defined.  Discovered this is the convention through testing.
 #
 #  11 July 2004 - added checkbox list handling functions
+#  18 July 2004 - added clearInputValue 
 #
 # CONVENTIONS
 # _ indicates a private variable or method
@@ -133,6 +134,29 @@ sub setInputValue
    my $value = shift;   
       
    $this->{'inputHashRef'}{$name} = $value;   
+}
+
+# -------------------------------------------------------------------------------------------------
+# clearInputValue
+#
+# Purpose:
+#  clears a value so it's not submitted for a form
+#
+# Parameters:
+#  string name
+
+# Updates:
+#  inputhashref
+#
+# Returns:
+#   nil
+#
+sub clearInputValue
+{
+   my $this = shift;
+   my $name = shift;
+      
+   delete $this->{'inputHashRef'}{$name};   
 }
 
 # -------------------------------------------------------------------------------------------------

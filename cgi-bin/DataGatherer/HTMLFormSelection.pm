@@ -7,7 +7,7 @@
 # History:
 #  1 June 2004 - added function to return the first option for the selection
 #    that can be used in lieu of a default value
-#
+
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
