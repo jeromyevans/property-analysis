@@ -32,7 +32,8 @@
 #   an index into the HTTP log.  IMPORTANT CHANGE: instanceID and transactionNo are passed to the parser callback functions.
 #                           - added support for transaction number that's used to count the number of documents fetched
 #   by the document reader in this instance.  The transaction number is now stored in the database and HTTP log file
-#
+#               1 Aug 2004 - fixed bug where multiple instances running concurrently would read and write to the same
+#   session file, making them get mixed up and lose track if reading out of order.
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -406,7 +407,7 @@ sub _loadSessionURLStack
 {
    my $this = shift;
    my @sessionURLstack;
-   my $sessionFileName = $this->{'sessionName'}.".session";
+   my $sessionFileName = $this->{'instanceID'}.".session";
    my $index = 0;
    my $httpTransaction;
    
@@ -471,7 +472,7 @@ sub _saveSessionURLStack
 {
    my $this = shift;
    my $sessionURLstackRef = shift;         
-   my $sessionFileName = $this->{'sessionName'}.".session";
+   my $sessionFileName = $this->{'instanceID'}.".session";
    my $length;
    my $url;
    my $method;

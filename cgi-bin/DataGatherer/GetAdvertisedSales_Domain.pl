@@ -126,7 +126,6 @@ my $statusServer;
 
 $printLogger->printHeader("$agent\n");
 
-
 # load the configuration file
 my %parameters = loadConfiguration($agent.".config", $printLogger);
 
@@ -721,26 +720,44 @@ sub parseChooseRegions
          # get all of the checkboxes and set them
          $checkboxListRef = $htmlForm->getCheckboxes();
                
+         #foreach (@$checkboxListRef)
+         #{                 
+         #   # $_ is a reference to an HTMLFormCheckbox
+         #   # set this checkbox input to true
+         #   $htmlForm->setInputValue($_->getName(), 'on');
+         #   
+         #   # create a transaction for only this checkbox selected
+         #   my %postParameters = $htmlForm->getPostParameters();
+         #   #DebugTools::printHash("$noOfTransactions", \%postParameters);
+         #   my $newHTTPTransaction = HTTPTransaction::new($actionURL, 'POST', \%postParameters, $url);                                           
+         #   # add this new transaction to the list to return for processing
+         #   $transactionList[$noOfTransactions] = $newHTTPTransaction;
+         #   $noOfTransactions++;
+         #    
+         #   # clear the checkbox value before the next post
+         #   $htmlForm->clearInputValue($_->getName());
+         #}
+         #
+         #$printLogger->print("   parseChooseRegions: returning a POST transaction for each checkbox...\n");
+         
          foreach (@$checkboxListRef)
          {                 
             # $_ is a reference to an HTMLFormCheckbox
             # set this checkbox input to true
             $htmlForm->setInputValue($_->getName(), 'on');
-            
-            # create a transaction for only this checkbox selected
-            my %postParameters = $htmlForm->getPostParameters();
-            #DebugTools::printHash("$noOfTransactions", \%postParameters);
-            my $newHTTPTransaction = HTTPTransaction::new($actionURL, 'POST', \%postParameters, $url);                                           
-            # add this new transaction to the list to return for processing
-            $transactionList[$noOfTransactions] = $newHTTPTransaction;
-            $noOfTransactions++;
-             
-            # clear the checkbox value before the next post
-            $htmlForm->clearInputValue($_->getName());
          }
-  
-         $printLogger->print("   parseChooseRegions: returning a POST transaction for each checkbox...\n");
-                     
+         
+         # create a transaction for only this checkbox selected
+         my %postParameters = $htmlForm->getPostParameters();
+         
+         my $newHTTPTransaction = HTTPTransaction::new($actionURL, 'POST', \%postParameters, $url);                                           
+         # add this new transaction to the list to return for processing
+         $transactionList[$noOfTransactions] = $newHTTPTransaction;
+         $noOfTransactions++;
+             
+         $printLogger->print("   parseChooseRegions: returning a POST transaction for setting every checkbox...\n");
+         
+            
       }	  
       else 
       {
@@ -1063,7 +1080,7 @@ sub parseParameters
    $statusPort = param("port");
    $state = param("state");
    $city = param("city");
-   
+print "startRange=$startLetter endRange=$endLetter city=$city state=$state\n";   
    if (($createTables) || ($startSession) || ($continueSession) || ($dropTables))
    {
       $result = 1;
