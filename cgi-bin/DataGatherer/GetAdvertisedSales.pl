@@ -78,11 +78,6 @@ sub loadConfiguration
 #  
 # -------------------------------------------------------------------------------------------------    
 
-#my $startURL = "http://www.reiwa.com.au/content-home.cfm";
-#my $startURL = "http://localhost/trial/content-home.htm";
-#my $startURL = "http://localhost/trial/searchdetails4.htm";
-#my $startURL = "http://localhost/cgi-bin/CookieTests.pl"; 
-
 my $SOURCE_NAME = "REIWA";
 my $useText = 0;
 my $createTables = 0;
@@ -114,7 +109,7 @@ if (!$agent)
 my $printLogger = PrintLogger::new($agent, $agent.".stdout", 1, $useText, $useHTML);
 my $statusServer;
 
-$printLogger->printHeader("Advertised Sales\n");
+$printLogger->printHeader("$agent\n");
 
 
 # load the configuration file
@@ -160,7 +155,7 @@ else
    $printLogger->print("   main: No action requested\n");
 }
 
-$printLogger->printFooter("Finished");
+$printLogger->printFooter("Finished\n");
 
 # -------------------------------------------------------------------------------------------------
 # extractSaleProfile

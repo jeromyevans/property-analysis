@@ -79,11 +79,23 @@ sub new
 # Returns:
 #   TRUE (1) if successful, 0 otherwise
 #
+# This statement below is just temporary for the statement to modify from the old table form
+#INSERT INTO AdvertisedSaleProfiles (DateEntered, LastEncountered, SourceName, SourceURL, SourceID, Checksum,
+#   SuburbIdentifier, SuburbName, Type, Bedrooms, Bathrooms, Land, YearBuilt, AdvertisedPriceLower,
+#   AdvertisedPriceUpper, Description, StreetNumber, Street, City, Council, Features) 
+#   SELECT oldSaleProfiles.DateEntered, LastEncountered, "REIWA", sourceURL, sourceID, checksum,
+#   SuburbIdentifier, SuburbName, Type, Bedrooms, bathrooms, Land, YearBuilt, AdvertisedPriceLower, 
+#   AdvertisedPriceUpper, Description, StreetNumber, Street, City, Council, Features
+#   FROM oldSaleProfiles, oldSaleProfilesLog
+#   WHERE oldSaleProfiles.sourceID = oldSaleProfilesLog.uniqueID
+#   GROUP BY uniqueID, checksum;
+   
 my $SQL_CREATE_TABLE_STATEMENT = "CREATE TABLE IF NOT EXISTS AdvertisedSaleProfiles ".
    "(DateEntered DATETIME NOT NULL, ".
     "LastEncountered DATETIME, ".
     "SourceName TEXT, ".
     "SourceURL TEXT, ".
+    "SourceID VARCHAR(20), "
     "Checksum INTEGER, ".
     "Identifier INTEGER ZEROFILL PRIMARY KEY AUTO_INCREMENT, ".    
     "SuburbIdentifier INTEGER, ".
@@ -95,7 +107,6 @@ my $SQL_CREATE_TABLE_STATEMENT = "CREATE TABLE IF NOT EXISTS AdvertisedSaleProfi
     "YearBuilt VARCHAR(5), ".
     "AdvertisedPriceLower DECIMAL(10,2), ".
     "AdvertisedPriceUpper DECIMAL(10,2), ".
-    "SourceID VARCHAR(20), ".    
     "Description TEXT, ".    
     "StreetNumber TEXT, ".
     "Street TEXT, ".    

@@ -5,7 +5,9 @@
 #
 # 16 May 04 - bugfixed algorithm checking search range
 #           - bugfix parseSearchDetails - was looking for wrong keyword to identify page
-
+#
+# 10 July 04 - modified to combine log table with AdvertisedSaleProfiles table
+#
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -68,11 +70,7 @@ sub loadConfiguration
 
 # -------------------------------------------------------------------------------------------------    
 
-#my $startURL = "http://www.reiwa.com.au/content-home.cfm";
-#my $startURL = "http://localhost/rental/content-home.htm";
-#my $startURL = "http://localhost/trial/searchdetails4.htm";
-#my $startURL = "http://localhost/cgi-bin/CookieTests.pl"; 
-
+my $SOURCE_NAME = "REIWA";
 my $useText = 0;
 my $createTables = 0;
 my $getSuburbProfiles = 0;
@@ -102,7 +100,7 @@ if (!$agent)
 my $printLogger = PrintLogger::new($agent, $agent.".stdout", 1, $useText, $useHTML);
 
 
-$printLogger->printHeader("Advertised Rentals\n");
+$printLogger->printHeader("$agent\n");
 
 # load the configuration file
 my %parameters = loadConfiguration($agent.".config", $printLogger);
@@ -114,11 +112,10 @@ if (!$parameters{'url'})
 
 if (($parseSuccess) && ($parameters{'url'}))
 {               
-   ($sqlClient, $advertisedRentalProfiles, $logTable) = initialiseTableObjects();
+   ($sqlClient, $advertisedRentalProfiles) = initialiseTableObjects();
    # hash of table objects - the key's are only significant to the local callback functions
  
    $myTableObjects{'advertisedRentalProfiles'} = $advertisedRentalProfiles;
-   $myTableObjects{'logTable'} = $logTable;
    
    $myParsers{"searchdetails"} = \&parseSearchDetails;
    $myParsers{"search.cfm"} = \&parseSearchForm;
@@ -358,23 +355,18 @@ sub parseSearchDetails
    if ($sqlClient->connect())
    {		 	 
       # check if the log already contains this checksum - if it does, assume the tuple already exists                  
-      if ($logTable->checkIfTupleExists($url, $checksum))
+      if ($advertisedRentalProfiles->checkIfTupleExists($SOURCE_NAME, $rentalProfiles{'SourceID'}, $checksum))
 	   {
          # this tuple has been previously extracted - it can be dropped
          # record in the log that it was encountered again
-         $printLogger->print("   parseSearchDetails: record already encountered at that URL.\n");
-	      $logTable->addEncounterRecord($url, $checksum);
+         $printLogger->print("   parseSearchDetails: record already encountered at $SOURCE_NAME.\n");
+	      $advertisedRentalProfiles->addEncounterRecord($SOURCE_NAME, $rentalProfiles{'SourceID'}, $checksum);
       }
       else
       {
          $printLogger->print("   parseSearchDetails: unique checksum/url - adding new record.\n");
          # this tuple has never been extracted before - add it to the database
-         if ($advertisedRentalProfiles->addRecord(\%rentalProfiles))
-         {
-            $printLogger->print("   parseSearchDetails: recording log for sourceID ", $rentalProfiles{'SourceID'}, ".\n");
-            # successfully added the tuple - log the checksum
-            $logTable->addRecord($url, $rentalProfiles{'SourceID'}, $checksum);
-         }
+         $advertisedRentalProfiles->addRecord($SOURCE_NAME, \%rentalProfiles, $url, $checksum);         
       }
    }
    else
@@ -663,22 +655,23 @@ sub parseSearchList
       if ($housesListRef = $htmlSyntaxTree->getAnchorsAndTextContainingPattern("\#"))
       {  
          # loop through all the entries in the log cache
-         $printLogger->print("   parseSearchList: checking unqiue ID cache...\n");
+         $printLogger->print("   parseSearchList: checking unqiue ID exists...\n");
          if ($sqlClient->connect())
          {
             foreach (@$housesListRef)
             {
                # check if the cache already contains this unique id
                # $_ is a reference to a hash                              
-               if (!$logTable->checkIfUniqueIDExists($$_{'string'}))
+               if (!$advertisedRentalProfiles->checkIfTupleExists($SOURCE_NAME, $$_{'string'}, undef))
                {   
                   $printLogger->print("   parseSearchList: adding anchor id ", $$_{'string'}, "...\n");
                   $printLogger->print("   parseSearchList: url=", $$_{'href'}, "\n");                  
                   push @urlList, $$_{'href'};
                }
                else
-               {
-                  $printLogger->print("   parseSearchList: id ", $$_{'string'} , " already in cache.  Ignoring anchor...\n");
+               {                 
+                  $printLogger->print("   parseSearchList: id ", $$_{'string'} , " in database.  Updating last encountered field...\n");
+                  $advertisedRentalProfiles->addEncounterRecord($SOURCE_NAME, $$_{'string'}, undef);
                }
             }
          }
