@@ -567,18 +567,13 @@ sub parseChooseSuburbs
             {  
    
                $value = $_->{'value'};
+                              
                if ($value =~ /All Suburbs/i)
                {
                   # ignore 'all suburbs' option
                }
                else
                {
-                  #print $_->{'value'}, "\n";
-                  # create a duplicate of the default post parameters
-                  my %newPostParameters = %defaultPostParameters;            
-                  # and set the value to this option in the selection
-                  
-                  $newPostParameters{'listboxSuburbs'} = $_->{'value'};
                   #($firstChar, $restOfString) = split(//, $_->{'text'});
                   #print $_->{'text'}, " FC=$firstChar ($startLetter, $endLetter) ";
                   $acceptSuburb = 1;
@@ -610,9 +605,32 @@ sub parseChooseSuburbs
                         
                   if ($acceptSuburb)
                   {         
-                     #print "accepted\n";               
+                     my %newPostParameters;
+                     
+                     # 2 Aug 04 - I don't understand why this was necessary, but if the default post parameters
+                     # hash was copied directly then 1Mb of memory per transaction is allocated.  Copying it 
+                     # manually like this only allocates scalars.  Strange.
+                     # create a duplicate of the default post parameters
+                     #my %newPostParameters2 = %defaultPostParameters;                             
+                     # and set the value to this option in the selection
+                     #$newPostParameters2{'listboxSuburbs'} = $_->{'value'};
+                     #DebugTools::printHash("oldPost", \%newPostParameters2);
+                     
+                     $newPostParameters{'txtKeywords'}=$defaultPostParameters{'txtKeywords'};
+                     $newPostParameters{'dropPriceFromSale'}=$defaultPostParameters{'dropPriceFromSale'};
+                     $newPostParameters{'listboxPropertyType'}=$defaultPostParameters{'listBoxPropertyType'};
+                     $newPostParameters{'dropPriceToSale'}=$defaultPostParameters{'dropPriceToSale'};
+                     $newPostParameters{'listboxBedrooms'}=$defaultPostParameters{'listboxBedrooms'};
+                     $newPostParameters{'imgbtnSearch.x'}=$defaultPostParameters{'imgbtnSearch.x'};
+                     $newPostParameters{'imgbtnSearch.y'}=$defaultPostParameters{'imgbtnSearch.y'};
+                     $newPostParameters{'listboxSuburbs'} = $_->{'value'};
+                     $newPostParameters{'__VIEWSTATE'} = $defaultPostParameters{'__VIEWSTATE'};
+                     
+                     #DebugTools::printHash("newPost", \%newPostParameters);
+                                       #print "actionURL= $actionURL\n";
+                                       #print "url=$url\n";
                      my $newHTTPTransaction = HTTPTransaction::new($actionURL, 'POST', \%newPostParameters, $url);
-                  
+                     #print $_->{'value'},"\n";
                      # add this new transaction to the list to return for processing
                      $transactionList[$noOfTransactions] = $newHTTPTransaction;
                      $noOfTransactions++;
@@ -720,40 +738,40 @@ sub parseChooseRegions
          # get all of the checkboxes and set them
          $checkboxListRef = $htmlForm->getCheckboxes();
                
-         #foreach (@$checkboxListRef)
-         #{                 
-         #   # $_ is a reference to an HTMLFormCheckbox
-         #   # set this checkbox input to true
-         #   $htmlForm->setInputValue($_->getName(), 'on');
-         #   
-         #   # create a transaction for only this checkbox selected
-         #   my %postParameters = $htmlForm->getPostParameters();
-         #   #DebugTools::printHash("$noOfTransactions", \%postParameters);
-         #   my $newHTTPTransaction = HTTPTransaction::new($actionURL, 'POST', \%postParameters, $url);                                           
-         #   # add this new transaction to the list to return for processing
-         #   $transactionList[$noOfTransactions] = $newHTTPTransaction;
-         #   $noOfTransactions++;
-         #    
-         #   # clear the checkbox value before the next post
-         #   $htmlForm->clearInputValue($_->getName());
-         #}
-         #
-         #$printLogger->print("   parseChooseRegions: returning a POST transaction for each checkbox...\n");
-         
          foreach (@$checkboxListRef)
          {                 
             # $_ is a reference to an HTMLFormCheckbox
             # set this checkbox input to true
             $htmlForm->setInputValue($_->getName(), 'on');
+            
+            # create a transaction for only this checkbox selected
+            my %postParameters = $htmlForm->getPostParameters();
+            #DebugTools::printHash("$noOfTransactions", \%postParameters);
+            my $newHTTPTransaction = HTTPTransaction::new($actionURL, 'POST', \%postParameters, $url);                                           
+            # add this new transaction to the list to return for processing
+            $transactionList[$noOfTransactions] = $newHTTPTransaction;
+            $noOfTransactions++;
+             
+            # clear the checkbox value before the next post
+            $htmlForm->clearInputValue($_->getName());
          }
          
-         # create a transaction for only this checkbox selected
-         my %postParameters = $htmlForm->getPostParameters();
+         #$printLogger->print("   parseChooseRegions: returning a POST transaction for each checkbox...\n");
          
-         my $newHTTPTransaction = HTTPTransaction::new($actionURL, 'POST', \%postParameters, $url);                                           
-         # add this new transaction to the list to return for processing
-         $transactionList[$noOfTransactions] = $newHTTPTransaction;
-         $noOfTransactions++;
+         #foreach (@$checkboxListRef)
+         #{                 
+         #   # $_ is a reference to an HTMLFormCheckbox
+         #   # set this checkbox input to true
+         #   $htmlForm->setInputValue($_->getName(), 'on');
+         #}
+        # 
+        # # create a transaction for only this checkbox selected
+        # my %postParameters = $htmlForm->getPostParameters();
+        # 
+        # my $newHTTPTransaction = HTTPTransaction::new($actionURL, 'POST', \%postParameters, $url);                                           
+        # # add this new transaction to the list to return for processing
+        # $transactionList[$noOfTransactions] = $newHTTPTransaction;
+        # $noOfTransactions++;
              
          $printLogger->print("   parseChooseRegions: returning a POST transaction for setting every checkbox...\n");
          
@@ -1080,7 +1098,7 @@ sub parseParameters
    $statusPort = param("port");
    $state = param("state");
    $city = param("city");
-print "startRange=$startLetter endRange=$endLetter city=$city state=$state\n";   
+
    if (($createTables) || ($startSession) || ($continueSession) || ($dropTables))
    {
       $result = 1;

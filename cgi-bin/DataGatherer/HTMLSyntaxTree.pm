@@ -431,6 +431,7 @@ sub _treeBuilder_callBack
                      
                      if ($name)
                      {
+                        #print "adding selection '$name'...\n";
                         $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addFormSelection($name);                     
                      }
                   }                                                                                                                       
@@ -474,7 +475,7 @@ sub _treeBuilder_callBack
                         $isSelected = 0;
                      }
                       
-                     #print "adding option '$value' isSelected='$isSelected'\n";                     
+                     #print "   adding option '$value' isSelected='$isSelected'\n";                     
                      $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addSelectionOption($value, $textValue, $isSelected);                                         
                   }                                                                                                                       
                }              

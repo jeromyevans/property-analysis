@@ -13,6 +13,7 @@
 #  25 July 2004 - added support for instanceID and transactionNo parameters in parser callbacks
 #  30 July 2004 - changed parseSearchDetails to only parse the page if it contains 'Property Details' - was encountering 
 #   empty responses from the server that yielded an empty database entry.
+#  21 August 2004 - changed parseSearchForm to set the main area to all of the state instead of just perth metropolitan.
 
 #
 # To do:
@@ -475,6 +476,10 @@ sub parseSearchForm
       $actionURL = new URI::URL($htmlForm->getAction(), $url)->abs();
            
       %defaultPostParameters = $htmlForm->getPostParameters();            
+      
+      # 21 August 2004 
+      # the default main area in the form is Perth Metropolitan.  Change it to [All]
+      $defaultPostParamters{'MainArea'} = "0";
       
       # for all of the suburbs defined in the form, create a transaction to get it
       $optionsRef = $htmlForm->getSelectionOptions('subdivision');
