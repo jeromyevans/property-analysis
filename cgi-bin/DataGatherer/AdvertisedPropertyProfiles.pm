@@ -184,7 +184,7 @@ sub createTable
    my $tableName = $this->{'tableName'};
  
    my $SQL_CREATE_TABLE_PREFIX = "CREATE TABLE IF NOT EXISTS $tableName (";
-   my $SQL_CREATE_TABLE_SUFFIX = ")";
+   my $SQL_CREATE_TABLE_SUFFIX = " INDEX (sourceName(5), sourceID(10)))";        # 23Jan05 - index!
    
    if ($sqlClient)
    {
@@ -582,7 +582,7 @@ sub _checkIfTupleExists_Sales
          }
       }
       
-      #print "   checkIfTupleExists: $statementText\n";      
+      #print "   checkIfTupleExistsSales: $statementText\n";      
       $statement = $sqlClient->prepareStatement($statementText);
       if ($sqlClient->executeStatement($statement))
       {
@@ -826,21 +826,23 @@ sub addEncounterRecord
       {
          $statementText = "UPDATE $tableName ".
            "SET LastEncountered = $localTime ".
-           "WHERE (sourceID = $quotedSourceID AND sourceName = $quotedSource AND checksum = $checksum)";
+           "WHERE (sourceName = $quotedSource AND sourceID = $quotedSourceID AND checksum = $checksum)";
       }
       else
       {
          $statementText = "UPDATE $tableName ".
            "SET LastEncountered = $localTime ".
-           "WHERE (sourceID = $quotedSourceID AND sourceName = $quotedSource)";
+           "WHERE (sourceName = $quotedSource AND sourceID = $quotedSourceID)";
       }
       
+      #print "addEncounterRecord: $statementText\n";
       $statement = $sqlClient->prepareStatement($statementText);
       
       if ($sqlClient->executeStatement($statement))
       {
          $success = 1;
       }
+      #print "addEncounterRecord: finished\n";
    }
    
    return $success;   
@@ -882,7 +884,8 @@ sub _createChangeTable
    my $SQL_CREATE_CHANGE_TABLE_PREFIX = "CREATE TABLE IF NOT EXISTS ChangeTable_$tableName (";
    my $SQL_CREATE_CHANGE_TABLE_SUFFIX = ", ".
       "ChangesRecord INTEGER ZEROFILL, ".  # primary key
-      "ChangedBy TEXT)";                   # who/what changed it 
+      "ChangedBy TEXT,".                   # who/what changed it
+      "INDEX (sourceName(5), sourceID(10)))";    # 23Jan05 - index!
       
    if ($sqlClient)
    {
@@ -1113,7 +1116,8 @@ sub _createWorkingViewTable
    my $SQL_CREATE_WORKINGVIEW_TABLE_SUFFIX = ", ".
        "ValidityCode INTEGER DEFAULT 1, ".        # validity code - default 1 means unvalidated
        "OverridenValidity INTEGER DEFAULT 0, ".   # overriddenValidity set by human
-       "ComponentOf INTEGER ZEROFILL)";           # foreign key to master property table
+       "ComponentOf INTEGER ZEROFILL".            # foreign key to master property table
+       " INDEX (sourceName(5), sourceID(10)))";   # 23Jan05 - index!
     
    
    if ($sqlClient)
@@ -1422,8 +1426,8 @@ sub _createCacheViewTable
        "Checksum INTEGER, ".
        "Identifier INTEGER ZEROFILL PRIMARY KEY AUTO_INCREMENT, ".    
        "AdvertisedWeeklyRent DECIMAL(10,2)";        
-   my $SQL_CREATE_CACHEVIEW_TABLE_SUFFIX = ")";         
-   
+   my $SQL_CREATE_CACHEVIEW_TABLE_SUFFIX = " INDEX (sourceName(5), sourceID(10)))";   # 23Jan05 - index!
+
    if ($sqlClient)
    {
       # append table prefix, original table body and table suffix

@@ -9,7 +9,7 @@
 #   Module that encapsulate the OriginatingHTMLTable database component
 #
 # History:
-#   
+# 19 Feb 2005 - hardcoded absolute log directory temporarily 
 #
 # CONVENTIONS
 # _ indicates a private variable or method
@@ -266,9 +266,9 @@ sub saveHTMLContent
    
    my $sessionFileName = $identifier.".html";
 
-   mkdir "logs", 0755;       	      
-   mkdir "logs/OriginatingHTML", 0755;       	      
-   open(SESSION_FILE, ">>logs/OriginatingHTML/$sessionFileName") || print "Can't open file: $!";
+   $logPath = "/projects/changeeffect/OriginatingHTML";
+   mkdir "$logPath", 0755;       	      
+   open(SESSION_FILE, ">>$logPath/$sessionFileName") || print "Can't open file: $!";
    print SESSION_FILE $content;
    close(SESSION_FILE);      
 }

@@ -26,6 +26,7 @@
 #  26 Oct 2004 - added clearCookies function
 #  31 Oct 20004 - added fetchDocument as a means to use a httpTransaction to get a document.  Previously it was upto the module
 #    using this to determine which method to use
+# 19 Feb 2005 - hardcoded absolute log directory temporarily
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -94,7 +95,8 @@ sub new ($)
    # because many sites don't clear the discard flag but still expect the cookie
    # to be saved.  Perhaps this is just my misunderstanding (5 Apr 2004)
    #print "HTTPClient:creating cookie jar: ", $sessionName, ".cookies\n";
-   $cookieJar = HTTP::Cookies->new( file => "logs/".$sessionName.".cookies", 
+   $logPath = "/projects/changeeffect/logs";
+   $cookieJar = HTTP::Cookies->new( file => "$logPath/".$sessionName.".cookies", 
                                     autosave => 0,
                                     ignore_discard => 1);
 #   print "   loading cookies logs/".$sessionName.".cookies...\n";
@@ -732,9 +734,9 @@ sub saveTransactionLog()
   ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
    $year += 1900;
    $mon++;
-   
-   mkdir "logs", 0755;       	      
-   open(SESSION_FILE, ">>logs/$sessionFileName") || print "Can't open file: $!"; 
+   $logPath = "/projects/changeeffect/logs";
+   mkdir $logPath, 0755;       	      
+   open(SESSION_FILE, ">>$logPath/$sessionFileName") || print "Can't open file: $!"; 
            
    print SESSION_FILE "\n\n\n<!-------------- TRANSACTION START ------------------>\n";           
    print SESSION_FILE "\n<transaction instance='$sessionName' count='$transactionNo' year='$year' mon='$mon' mday='$mday' hour='$hour' min='$min' sec='$sec'>\n";

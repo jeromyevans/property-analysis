@@ -57,6 +57,8 @@
 #                          - extended timeout for parsing from 20seconds to 45 seconds as the low value was due to 
 #   to memory leak error that's mainly now avoided.  On initial runs because of the size of the database the parser
 #   ran take a long time.
+#              19 Feb 2005 - hardcoded absolute log directory temporarily
+#
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -1022,7 +1024,8 @@ sub recoverCookies
    {
       $printLogger->print("in recoverCookies (lastInstanceID=$sessionName, newInstanceID=$instanceID):\n");
       # copy the old file in place of the new one
-      if (!copy("logs/".$sessionName.".cookies", "logs/".$instanceID.".cookies"))
+      $logPath = "/projects/changeeffect/logs";
+      if (!copy("$logPath/".$sessionName.".cookies", "$logPath/".$instanceID.".cookies"))
       {
          print "Failed to duplicate previous cookie file\n";
       }
@@ -1059,7 +1062,9 @@ sub deleteCookies
    $httpClient->clearCookies();
 #   print "Deleting cookie file logs/".$instanceID.".cookies\n";
    # copy the old file in place of the new one
-   if (!unlink("logs/".$instanceID.".cookies"))
+   $logPath = "/projects/changeeffect/logs";
+
+   if (!unlink("$logPath/".$instanceID.".cookies"))
    {
       print "Failed to delete cookie file\n";
    }

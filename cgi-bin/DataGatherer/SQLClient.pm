@@ -17,6 +17,7 @@
 # for the specified table and primary key
 #  8 Dec 2004  - modified quote to return 'null' for undef variables instead of the default of '';
 # 11 Jan 2005  - BUGFIX - fixed quote so that variables that are SUPPOSED to be 0 are not set to null
+# 19 Feb 2005 - hardcoded absolute log directory temporarily
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -559,9 +560,9 @@ sub saveSQLLog()
   ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
    $year += 1900;
    $mon++;
-   
-   mkdir "logs", 0755;       	      
-   open(SESSION_FILE, ">>logs/$sessionFileName") || print "Can't open file: $!"; 
+   $logPath = "/projects/changeeffect/logs";
+   mkdir $logPath, 0755;       	      
+   open(SESSION_FILE, ">>$logPath/$sessionFileName") || print "Can't open file: $!"; 
            
    print SESSION_FILE "\n<sql_transaction instance='$sessionName' year='$year' mon='$mon' mday='$mday' hour='$hour' min='$min' sec='$sec'>\n";
    print SESSION_FILE $this->{'statementText'};

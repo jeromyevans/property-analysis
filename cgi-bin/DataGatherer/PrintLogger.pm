@@ -9,7 +9,7 @@
 #   - stdout via CGI (xml)
 
 # Version 0.1 - Added escapeHTML for HTML output and substitution of /n with <br\>
-# 
+# 19 Feb 2005 - hardcoded absolute log directory temporarily
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -48,11 +48,13 @@ sub new
    my $logToStdout = shift;
    my $logToCGI = shift;
    
-   mkdir "logs", 0755;    
+  $logPath = "/projects/changeeffect/logs";
+
+   mkdir $logPath, 0755;    
    
    my $printLogger = { 
       sessionName => $sessionName,
-      logFileName => "logs/".$logFileName,   
+      logFileName => "$logPath/".$logFileName,   
       logToFile => $logToFile,
       logToStdout => $logToStdout,
       logToCGI => $logToCGI
