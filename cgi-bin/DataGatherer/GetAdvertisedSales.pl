@@ -8,10 +8,13 @@
 #           - bugfix wasn't using parameters{'url'} as start URL
 #           - added AgentStatusServer support to send status info over a TCP connection
 #
+#   9 July 2004 - Merged with LogTable to record encounter information (date last encountered, url, checksum)
+#  to support searches like get records 'still advertised'
+ 
+#
 # To do:
-#  - better logging instead of using stdout
 #  - front page for monitoring progress
-#  - support to run from a cron job or CGI
+#
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -61,7 +64,7 @@ sub loadConfiguration
       {
          # remove end of line marker from $_
          chomp;
-	      # split on null character
+         # split on null character
          ($key, $value) = split /=/;	 	 
          $parameters{$key} = $value;                                    
       }
@@ -80,6 +83,7 @@ sub loadConfiguration
 #my $startURL = "http://localhost/trial/searchdetails4.htm";
 #my $startURL = "http://localhost/cgi-bin/CookieTests.pl"; 
 
+my $SOURCE_NAME = "REIWA";
 my $useText = 0;
 my $createTables = 0;
 my $getSuburbProfiles = 0;
@@ -99,7 +103,7 @@ my $useHTML = param('html');
 
 if (!$useHTML)
 {
-   $useText = 0; 
+   $useText = 1; 
 }
 
 if (!$agent)
@@ -132,24 +136,24 @@ if (($parseSuccess) && ($parameters{'url'}))
       $printLogger->print("   main: started agent status server (port=$statusPort)\n");
    }            
    
-   ($sqlClient, $advertisedSaleProfiles, $logTable) = initialiseTableObjects();
+   ($sqlClient, $advertisedSaleProfiles) = initialiseTableObjects();
    # hash of table objects - the key's are only significant to the local callback functions
  
    $myTableObjects{'advertisedSaleProfiles'} = $advertisedSaleProfiles;
-   $myTableObjects{'logTable'} = $logTable;
-   
+      
    $myParsers{"searchdetails"} = \&parseSearchDetails;
    $myParsers{"search.cfm"} = \&parseSearchForm;
    $myParsers{"content-home"} = \&parseHomePage;
    $myParsers{"searchquery"} = \&parseSearchQuery;
    $myParsers{"searchlist"} = \&parseSearchList;
    $myParsers{"CGIPostTest"} = \&parseDisplayResponse;   
-     
+
    my $myDocumentReader = DocumentReader::new($agent, $parameters{'url'}, $sqlClient, 
       \%myTableObjects, \%myParsers, $printLogger);
-   
+
    #$myDocumentReader->setProxy("http://netcache.dsto.defence.gov.au:8080");
    $myDocumentReader->run($createTables, $startSession, $continueSession, $dropTables);
+ 
 }
 else
 {
@@ -157,7 +161,6 @@ else
 }
 
 $printLogger->printFooter("Finished");
-
 
 # -------------------------------------------------------------------------------------------------
 # extractSaleProfile
@@ -385,23 +388,18 @@ sub parseSearchDetails
    if ($sqlClient->connect())
    {		 	 
       # check if the log already contains this checksum - if it does, assume the tuple already exists                  
-      if ($logTable->checkIfTupleExists($url, $checksum))
+      if ($advertisedSaleProfiles->checkIfTupleExists($SOURCE_NAME, $saleProfiles{'SourceID'}, $checksum))
 	   {
          # this tuple has been previously extracted - it can be dropped
-         # record in the log that it was encountered again
-         $printLogger->print("   parseSearchDetails: record already encountered at that URL.\n");
-	      $logTable->addEncounterRecord($url, $checksum);
+         # record that it was encountered again
+         $printLogger->print("   parseSearchDetails: identical record already encountered at $SOURCE_NAME.\n");
+	      $advertisedSaleProfiles->addEncounterRecord($SOURCE_NAME, $saleProfiles{'SourceID'}, $checksum);
       }
       else
       {
          $printLogger->print("   parseSearchDetails: unique checksum/url - adding new record.\n");
          # this tuple has never been extracted before - add it to the database
-         if ($advertisedSaleProfiles->addRecord(\%saleProfiles))
-         {
-            $printLogger->print("   parseSearchDetails: recording log for sourceID ", $saleProfiles{'SourceID'}, ".\n");
-            # successfully added the tuple - log the checksum
-            $logTable->addRecord($url, $saleProfiles{'SourceID'}, $checksum);
-         }
+         $advertisedSaleProfiles->addRecord($SOURCE_NAME, \%saleProfiles, $url, $checksum);         
       }
    }
    else
@@ -689,14 +687,14 @@ sub parseSearchList
       if ($housesListRef = $htmlSyntaxTree->getAnchorsAndTextContainingPattern("\#"))
       {  
          # loop through all the entries in the log cache
-         $printLogger->print("   parseSearchList: checking unqiue ID cache...\n");
+         $printLogger->print("   parseSearchList: checking if unqiue ID exists...\n");
          if ($sqlClient->connect())
          {
             foreach (@$housesListRef)
             {
                # check if the cache already contains this unique id
-               # $_ is a reference to a hash                              
-               if (!$logTable->checkIfUniqueIDExists($$_{'string'}))
+               # $_ is a reference to a hash
+               if (!$advertisedSaleProfiles->checkIfTupleExists($SOURCE_NAME, $$_{'string'}, undef))                              
                {   
                   $printLogger->print("   parseSearchList: adding anchor id ", $$_{'string'}, "...\n");
                   $printLogger->print("   parseSearchList: url=", $$_{'href'}, "\n");                  
@@ -704,7 +702,8 @@ sub parseSearchList
                }
                else
                {
-                  $printLogger->print("   parseSearchList: id ", $$_{'string'} , " already in cache.  Ignoring anchor...\n");
+                  $printLogger->print("   parseSearchList: id ", $$_{'string'} , " in database.  Updating last encountered field...\n");
+                  $advertisedSaleProfiles->addEncounterRecord($SOURCE_NAME, $$_{'string'}, undef);
                }
             }
          }
@@ -816,9 +815,8 @@ sub initialiseTableObjects
 {
    my $sqlClient = SQLClient::new(); 
    my $advertisedSaleProfiles = AdvertisedSaleProfiles::new($sqlClient);
-   my $logTable = LogTable::new($sqlClient, "AdvertisedSaleProfilesLog");
  
-   return ($sqlClient, $advertisedSaleProfiles, $logTable);
+   return ($sqlClient, $advertisedSaleProfiles);
 }
 
 # -------------------------------------------------------------------------------------------------

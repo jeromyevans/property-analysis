@@ -3,7 +3,7 @@
 # Started 13 March 2004
 # 
 # WBS: A.01.03.01 Developed On-line Database
-# Version 0.0  
+# Version 0.1  
 #
 # Description:
 #   Module that encapsulate the AdvertisedSaleProfiles database component
@@ -12,6 +12,9 @@
 #   18 May 2004 - fixed bug in addRecord that failed to properly quote every
 #     variable (it addded quotes, but didn't call use the sqlclient quote method
 #     to escape quotes contained inside the value.
+#
+#   9 July 2004 - Merged with LogTable to record encounter information (date last encountered, url, checksum)
+#  to support searches like get records 'still advertised'
 #
 # CONVENTIONS
 # _ indicates a private variable or method
@@ -44,7 +47,8 @@ sub new
    my $sqlClient = shift;
    
    my $advertisedSaleProfiles = { 
-      sqlClient => $sqlClient
+      sqlClient => $sqlClient,
+      tableName => "advertisedSaleProfiles"
    }; 
       
    bless $advertisedSaleProfiles;     
@@ -77,6 +81,10 @@ sub new
 #
 my $SQL_CREATE_TABLE_STATEMENT = "CREATE TABLE IF NOT EXISTS AdvertisedSaleProfiles ".
    "(DateEntered DATETIME NOT NULL, ".
+    "LastEncountered DATETIME, ".
+    "SourceName TEXT, ".
+    "SourceURL TEXT, ".
+    "Checksum INTEGER, ".
     "Identifier INTEGER ZEROFILL PRIMARY KEY AUTO_INCREMENT, ".    
     "SuburbIdentifier INTEGER, ".
     "SuburbName TEXT, ".
@@ -123,7 +131,10 @@ sub createTable
 #  Storing information in the database
 #
 # Parameters:
+#  string source name
 #  reference to a hash containing the values to insert
+#  string sourceURL
+#  integer checksum
 #
 # Constraints:
 #  nil
@@ -136,13 +147,15 @@ sub createTable
 #
 # Returns:
 #   TRUE (1) if successful, 0 otherwise
-#  
-      
+#        
 sub addRecord
 
 {
    my $this = shift;
+   my $sourceName = shift;
    my $parametersRef = shift;
+   my $url = shift;
+   my $checksum = shift;
    
    my $success = 0;
    my $sqlClient = $this->{'sqlClient'};
@@ -155,7 +168,7 @@ sub addRecord
       @columnNames = keys %$parametersRef;
       
       # modify the statement to specify each column value to set 
-      $appendString = "DateEntered, identifier, ";
+      $appendString = "DateEntered, identifier, sourceName, sourceURL, checksum, ";
       $index = 0;
       foreach (@columnNames)
       {
@@ -173,7 +186,9 @@ sub addRecord
       # modify the statement to specify each column value to set 
       @columnValues = values %$parametersRef;
       $index = 0;
-      $appendString = "localtime(), null, ";
+      $quotedSource = $sqlClient->quote($sourceName);
+      $quotedUrl = $sqlClient->quote($url);
+      $appendString = "localtime(), null, $quotedSource, $quotedUrl, $checksum, ";
       foreach (@columnValues)
       {
          if ($index != 0)
@@ -297,4 +312,147 @@ sub countEntries
    }   
    return $noOfEntries;   
 }  
+
+
+# -------------------------------------------------------------------------------------------------
+
+
+# -------------------------------------------------------------------------------------------------
+# checkIfTupleExists
+# checks whether the specified tuple exists in the table (part of this check uses a checksum)
+#
+# Purpose:
+#  tracking data parsed by the agent
+#
+# Parameters:
+#  string source
+#  string sourceID
+#  string checksum (ignored if undef)
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  Nil
+#
+# Returns:
+#   nil
+sub checkIfTupleExists
+{   
+   my $this = shift;
+   my $sourceName = shift;      
+   my $sourceID = shift;
+   my $checksum = shift;
+   my $statement;
+   my $found = 0;
+   my $statementText;
+   
+   my $sqlClient = $this->{'sqlClient'};
+   my $tableName = $this->{'tableName'};
+   
+   if ($sqlClient)
+   {       
+      $quotedSource = $sqlClient->quote($sourceName);
+      $quotedSourceID = $sqlClient->quote($sourceID);
+      $quotedUrl = $sqlClient->quote($url);
+      if (defined $checksum)
+      {      
+         $statementText = "SELECT sourceName, sourceID, checksum FROM $tableName WHERE sourceName = $quotedSource and sourceID = $quotedSourceID and checksum = $checksum";
+      }
+      else
+      {
+         $statementText = "SELECT sourceName, sourceID FROM $tableName WHERE sourceName = $quotedSource and sourceID = $quotedSourceID";
+      }      
+            
+      $statement = $sqlClient->prepareStatement($statementText);
+      
+      if ($sqlClient->executeStatement($statement))
+      {
+         # get the array of rows from the table
+         @checksumList = $sqlClient->fetchResults();
+                           
+         foreach (@checksumList)
+         {        
+            # $_ is a reference to a hash
+            if (($$_{'checksum'} == $checksum) && ($$_{'source'} == $sourceName) && ($$_{'sourceID'} == $sourceID))            
+            {
+               # found a match
+               $found = 1;
+               last;
+            }
+         }                 
+      }                    
+   }   
+   return $found;   
+}  
+
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+# addEncounterRecord
+# records in the table that a unique tuple with has been encountered again
+# (used for tracking how often unchanged data is encountered, parsed and rejected)
+# 
+# Purpose:
+#  Logging information in the database
+#
+# Parameters: 
+#  string sourceName
+#  string sourceID
+#  integer checksum  (ignored if undef)
+#
+# Constraints:
+#  nil
+#
+# Uses:
+#  sqlClient
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   TRUE (1) if successful, 0 otherwise
+#        
+sub addEncounterRecord
+
+{
+   my $this = shift;
+   my $sourceName = shift;
+   my $sourceID = shift;
+   my $checksum = shift;
+   
+   my $success = 0;
+   my $sqlClient = $this->{'sqlClient'};  
+   my $tableName = $this->{'tableName'};
+   my $statementText;
+   
+   if ($sqlClient)
+   {
+      $quotedSource = $sqlClient->quote($sourceName);
+      $quotedSourceID = $sqlClient->quote($sourceID);
+      $quotedUrl = $sqlClient->quote($url);
+  
+      if (defined $checksum)
+      {
+         $statementText = "UPDATE $tableName ".
+           "SET LastEncountered = localtime() ".
+           "WHERE (sourceID = $quotedSourceID AND sourceName = $quotedSource AND checksum = $checksum)";
+      }
+      else
+      {
+         $statementText = "UPDATE $tableName ".
+           "SET LastEncountered = localtime() ".
+           "WHERE (sourceID = $quotedSourceID AND sourceName = $quotedSource)";
+      }
+      
+      $statement = $sqlClient->prepareStatement($statementText);
+      
+      if ($sqlClient->executeStatement($statement))
+      {
+         $success = 1;
+      }
+   }
+   
+   return $success;   
+}
+
 
