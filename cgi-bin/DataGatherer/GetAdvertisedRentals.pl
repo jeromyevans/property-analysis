@@ -248,7 +248,7 @@ sub extractRentalProfile
    
    if ($priceLower) 
    {
-      $rentalProfile{'AdvertisedWeeklyrent'} = $documentReader->parseNumber($priceLower);
+      $rentalProfile{'AdvertisedWeeklyRent'} = $documentReader->parseNumber($priceLower);
    }  
       
    if ($type)

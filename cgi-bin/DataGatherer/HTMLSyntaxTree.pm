@@ -52,6 +52,8 @@
 # Version 0.17 - added getAnchorsAndTextContainingPattern that's the same as 
 #  GetAnchorsContainingPattern but returns the anchor and pattern in a hash list. Implemented
 #  for extracting pertinent information from the link text rather than the URL.
+# 23 May 2004 - if a checkbox is encountered in a form, it's now ignored unless
+#   the selected attribute is set
 #
 # Description:
 #   Module that accepts an HTTP::Response and runs a parser (HTTP:TreeBuilder)
@@ -355,6 +357,17 @@ sub _treeBuilder_callBack
                      {
                         $name = undef;
                      }     
+                     
+                     # if the type is checkbox...
+                     if ($type =~ /CHECKBOX/i)
+                     {
+                        # it it's not selected, ignore it
+                        if (!defined $currentElement->attr('selected'))
+                        {
+                           $name = undef;
+                        }
+                     }     
+                     
                      
                      # if the type is reset, then ignore it
                      
