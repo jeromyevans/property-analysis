@@ -158,6 +158,8 @@ sub addRecord
    my $parametersRef = shift;
    my $url = shift;
    my $checksum = shift;
+   my $instanceID = shift;
+   my $transactionNo = shift;
    
    my $success = 0;
    my $sqlClient = $this->{'sqlClient'};
