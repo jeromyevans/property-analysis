@@ -449,24 +449,30 @@ sub checkIfTupleExists
       }
       else
       {
+         #print "   checkIfTupleExists:noChecksum\n";
          if ($advertisedPriceLower)
          {
+            #print "   checkIfTupleExists:apl=$advertisedPriceLower\n";
+
             $statementText = "SELECT sourceName, sourceID, advertisedPriceLower FROM $tableName WHERE sourceName = $quotedSource and sourceID = $quotedSourceID and advertisedPriceLower = $advertisedPriceLower";
          }
          else
          {
+            #print "   checkIfTupleExists:no apl\n";
+
             $statementText = "SELECT sourceName, sourceID FROM $tableName WHERE sourceName = $quotedSource and sourceID = $quotedSourceID";
          }
       }      
-            
+      #print "   checkIfTupleExists: $statementText\n";      
       $statement = $sqlClient->prepareStatement($statementText);
       if ($sqlClient->executeStatement($statement))
       {
          # get the array of rows from the table
          @checksumList = $sqlClient->fetchResults();
-                           
+         #DebugTools::printList("checksum", \@checksumList);                  
          foreach (@checksumList)
          {
+            #DebugTools::printHash("result", $_);
             # only check advertisedpricelower if it's undef (if caller hasn't set it because info wasn't available then don't check that field.           
             if ($advertisedPriceLower)
             {
@@ -489,7 +495,7 @@ sub checkIfTupleExists
                }
             }
          }                 
-      }                    
+      }              
    }   
    return $found;   
 }  

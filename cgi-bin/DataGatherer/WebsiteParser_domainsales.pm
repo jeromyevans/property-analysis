@@ -15,12 +15,14 @@
 # CURRENT PROBLEM IS THAT IF IT BOMBS OUT within a region it goes back to the start
 # of that region for some reason and doesn't seem to recover.  It's related to the
 # sesison file.
-# CHANGE TO BE COMPLETELY THREAD BASED BY REGION so a new session and cookie set generated
-#  by the domain server 
+# NEED TO FIND OUT WHY THE CACHE CHECK ISN'T WORKING IN THE SEARCH RESULTS
 #
 # 26 Oct 04 - significant re-architecting to return to the base page and clear cookies after processing each
 #  region - the theory is that it will allow NSW to be completely processed without stuffing up the 
 #  session on domain server.
+# 27 Oct 04 - had to change the way suburbname is extracted by looking up name in the postcodes
+#  list (only way it can be extracted from a sentance now).  
+#   Loosened the way price is extracted to get the cache check working where price contained a string
 
 use PrintLogger;
 use CGI qw(:standard);
@@ -73,23 +75,63 @@ sub extractDomainSaleProfile
    my $printLogger = $documentReader->getGlobalParameter('printLogger');
    my $state = $documentReader->getGlobalParameter('state');
    my $city = $documentReader->getGlobalParameter('city');
+
+   my $tablesRef = $documentReader->getTableObjects();
+   my $advertisedSaleProfiles = $$tablesRef{'advertisedSaleProfiles'};
+   my $sqlClient = $documentReader->getSQLClient();
    
-   # --- set start contraint to Print to get the first line of text (id, suburb, price)
-   #$htmlSyntaxTree->setSearchStartConstraintByText("Print");
+   
  
-   # --- set start constraint to the 3rd table (table 2) on the page - this is table
    # --- across the top that MAY contain a title and description
    $htmlSyntaxTree->setSearchStartConstraintByText("Property Details");
    $htmlSyntaxTree->setSearchEndConstraintByText("Agent Details"); 
    
-   $searchSourceURL = $htmlSyntaxTree->getNextAnchorContainingPattern("Back to Search Results");
-   # extract the suburb name from the URL.  This is the easiest place to get it as it's used in the
-   # path of a URL following sub=
-   $searchSourceURL =~ s/sub\=(.*)\&page/$suburb=sprintf("$1")/egi;
+   # get the suburb name out of the <h1> heading
+   #first word(s) is suburb name, then price or 
+   $htmlSyntaxTree->setSearchStartConstraintByTag("h1");
+   $suburbAndPriceString = $htmlSyntaxTree->getNextText();
    
-   # replace + with space character
-   $suburb =~ s/\+/ /g;
-  
+   # remove any price information from the string...
+   ($suburbNameString, $crud) = split(/\$/, $suburbAndPriceString, 2);
+   $suburbNameString = $documentReader->trimWhitespace($suburbNameString);
+      
+   # time to get clever - use the first to see if there's a defined matching suburb name
+   @words = split(/ /, $suburbNameString);
+   
+   $suburb = $suburbNameString;  # start assuming the whole string is the suburb name (default)
+   
+   $matchedSuburb = 0;
+   $tryNextWord = 0;
+   $searchPattern = "";
+   $firstRun = 1;
+   # loop for all the words in the string
+   foreach (@words)
+   {
+      if ($firstRun)
+      {
+         $suburbPattern .= $_;    # append this word to the search pattern
+         $firstRun = 0;
+      }
+      else
+      {
+         $suburbPattern .= " ".$_;   # insert a space then this word
+      }
+      
+      # see if this is a suburb name...
+      %matchedSuburb = matchSuburbName($sqlClient, $suburbPattern, $state);
+      if (%matchedSuburb)
+      {
+         # this word matched a suburb - try the next word as well in case this is just a subset
+         $suburb = $matchedSuburb{'SuburbName'};
+         $tryNextWord = 1;
+      }
+      else
+      {
+         # didn't match - use the last matched pattern instead (or default if this is first run)
+         last;
+      }
+   }
+        
    $htmlSyntaxTree->resetSearchConstraints();
    $htmlSyntaxTree->setSearchStartConstraintByTag("h2");
    $htmlSyntaxTree->setSearchEndConstraintByText("Latest Auction"); 
@@ -151,15 +193,11 @@ sub extractDomainSaleProfile
    $street = $documentReader->trimWhitespace($street);
    
    $priceString = $htmlSyntaxTree->getNextTextAfterPattern("Price:");
-   $priceString = $htmlSyntaxTree->getNextTextAfterPattern("Price:");
 
    # price string is sometimes lower followed by a dash then price upper
    ($priceLowerString, $priceUpperString) = split(/-/, $priceString, 2);
-   #print "priceLowerString = $priceLowerString\n";
-   #print "priceUpperString = $priceUpperString\n";
    $priceLower = $documentReader->strictNumber($documentReader->parseNumberSomewhereInString($priceLowerString));
    $priceUpper = $documentReader->strictNumber($documentReader->parseNumberSomewhereInString($priceUpperString));
-   
    $sourceID = $documentReader->trimWhitespace($htmlSyntaxTree->getNextTextAfterPattern("Property ID:"));
    
    $type = $documentReader->trimWhitespace($htmlSyntaxTree->getNextText());  # always set (contains at least TYPE)
@@ -909,6 +947,10 @@ sub parseDomainSalesSearchResults
             if ($priceLowerString)
             {
                $priceLower = $documentReader->strictNumber($documentReader->parseNumber($priceLowerString));
+            }
+            else
+            {
+               $priceLower = undef;
             }
             
             # remove non-numeric characters from the string occuring after the question mark
