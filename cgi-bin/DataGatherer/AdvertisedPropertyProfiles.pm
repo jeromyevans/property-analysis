@@ -1318,13 +1318,12 @@ sub _workingView_changeRecord
          }
          
          $quotedValue = $sqlClient->quote($value);
+         
          $appendString = $appendString . "$field = $quotedValue ";
          $index++;
       }      
       
       $statementText = $appendString." WHERE identifier=$sourceIdentifier";
-      
-      #print "statement = ", $statementText, "\n";
       
       $statement = $sqlClient->prepareStatement($statementText);
       

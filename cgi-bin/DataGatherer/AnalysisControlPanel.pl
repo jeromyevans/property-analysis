@@ -260,9 +260,8 @@ sub estimateRent
    my %rentalMean;                         
      
    $suburbName = $$propertyDataHashRef{'SuburbName'};       
-   $suburbName =~ tr/[A-Z]/[a-z]/;      
    
-   ($officialSalesMean, $officialRentalMean) = $analysisTools->fetchOfficialMedians($suburbName);
+   #($officialSalesMean, $officialRentalMean) = $analysisTools->fetchOfficialMedians($suburbName);
    
    # for the house price, use the lower of the two available values
    # (to give worse result)
@@ -276,8 +275,8 @@ sub estimateRent
    
    if ($housePrice > 0)
    {
-      #$delta = $housePrice - $$salesMean{$suburbName};
-      $delta = $housePrice - $officialSalesMean;
+      $delta = $housePrice - $$salesMean{$suburbName};
+      #$delta = $housePrice - $officialSalesMean;
            
       if ($$salesStdDev{$suburbName} > 0)
       {
@@ -291,8 +290,8 @@ sub estimateRent
          
       if ($$rentalStdDev{$suburbName} > 0)
       {
-         #$estimatedRent = ($ratio * $$rentalStdDev{$suburbName}) + $$rentalMean{$suburbName};
-         $estimatedRent = ($ratio * $$rentalStdDev{$suburbName}) + $officialRentalMean;         
+         $estimatedRent = ($ratio * $$rentalStdDev{$suburbName}) + $$rentalMean{$suburbName};
+         #$estimatedRent = ($ratio * $$rentalStdDev{$suburbName}) + $officialRentalMean;         
          # round down to the nearest $10.
          $estimatedRent = int($estimatedRent / 10) * 10;         
       }
@@ -301,10 +300,14 @@ sub estimateRent
          $estimatedRent = 0;
       }              
       
-      $estimatedYield = ($estimatedRent * 5200) /  $housePrice;      
+      $estimatedYield = ($estimatedRent * 5200) /  $housePrice;
+
+      # estimate the cashflow for the property
+      $infoHashRef = $analysisTools->estimateWeeklyCashflow($housePrice, $estimatedRent);
+   
    }       
       
-   return ($estimatedRent, $estimatedYield);   
+   return ($estimatedRent, $estimatedYield, $$infoHashRef{'purchaseCosts'}, $$infoHashRef{'mortgageCosts'}, $$infoHashRef{'annualIncome'}, $$infoHashRef{'annualExpenses'}, $$infoHashRef{'weeklyCashflow'});   
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -313,25 +316,29 @@ sub estimateRent
 sub callback_analysisDataTable
 {         
    my @suburbList;
-   my $index = 0;   
-   
+   my $index = 0;
+  
+   my @categoryName = (["Any", "",      "",   "",   "",      "",   "",   ""],
+                       ["",   "3 beds", "",   "",   "4 beds", "",   "",   "5 beds"],
+                       ["",   "",      "3x1", "3x2", "",      "4x1", "4x2", ""]);          
+                       
    getOrderBy();
       
-   print "<table><tr><th>Suburb</th><th>Field</th><th>Min</th><th>Median</th><th>REIWA Median</th><th>Max</th><th>StdDev</th><th>(Sample Size)</th></tr>\n";            
+   #print "<table><tr><th>Suburb</th><th>Type</th><th>Field</th><th>Min</th><th>Median</th><th>REIWA Median</th><th>Max</th><th>StdDev</th><th>Yield</th><th>(Sample Size)</th></tr>\n";            
+   print "<table border='0'><tr border='0'><th border='0'>Suburb</th><th colspan=3>Type</th><th>Field</th><th>Min</th><th>Median</th><th>Max</th><th>StdDev</th><th>Yield</th><th>(Sample Size)</th></tr>\n";
    
    $analysisTools->calculateSalesAnalysis();
    $analysisTools->calculateRentalAnalysis();
    $analysisTools->calculateYield();   
       
-   $noOfSales = $analysisTools->getNoOfSalesHash();
-   $noOfRentals = $analysisTools->getNoOfRentalsHash();
-   #$salesMean = $analysisTools->getSalesMeanHash();
-   #$rentalMean = $analysisTools->getRentalMeanHash();
    
-   $salesMedian = $analysisTools->getSalesMedianHash();
-   $rentalMedian = $analysisTools->getRentalMedianHash();
-   $medianYield = $analysisTools->getMedianYieldHash();
-
+   $noOfSales = $analysisTools->getNoOfSalesHash(0);
+   $noOfRentals = $analysisTools->getNoOfRentalsHash(0);
+   $salesMedian = $analysisTools->getSalesMedianHash(0);
+   $rentalMedian = $analysisTools->getRentalMedianHash(0);
+   $medianYield = $analysisTools->getMedianYieldHash(0);
+         
+         
    # get the list of suburbs from the keys of listings (any of the hashes would do)
    # and sort it into alphabetical order   
    if ($orderBy eq 'suburb')
@@ -380,50 +387,65 @@ sub callback_analysisDataTable
       
    $length=@suburbList;
 
-   $minSalePrice = $analysisTools->getSalesMinHash();
-   $maxSalePrice = $analysisTools->getSalesMaxHash();
-   $salesStdDev = $analysisTools->getSalesStdDevHash();
-   $minRentalPrice = $analysisTools->getRentalMinHash();
-   $maxRentalPrice = $analysisTools->getRentalMaxHash();
-   $rentalStdDev = $analysisTools->getRentalStdDevHash();
-   $officialSalesMedian = $analysisTools->getOfficialSalesMedianHash();
-   $officialRentalMedian = $analysisTools->getOfficialRentalMedianHash();
-   
    # generate the table to display
+   $oddEvenToggle = 0; 
+   $bgColour[0] = "#ccffff";
+   $bgColour[1] = "#ffffff";
    foreach (@suburbList)
-   {      
+   {
       # $_ is the suburb name
-      
-      #$suburbName = URI::Escape::uri_escape($_);
       $suburbName = $_;
-            
-      $minPriceInstance = commify(sprintf("\$%.0f", $$minSalePrice{$_}));
-      $maxPriceInstance = commify(sprintf("\$%.0f", $$maxSalePrice{$_}));
-      $salesStdDevInstance = commify(sprintf("\$%.0f", $$salesStdDev{$_}));
-      $rentalStdDevInstance = commify(sprintf("\$%.0f", $$rentalStdDev{$_}));     
-      if ($$salesMedian{$_} > 0)
+      
+      $outputSomething = 0;
+      for ($category = 0; $category < 8; $category++)
       {
-         $salesStdDevPercentInstance = commify(sprintf("%.2f", $$salesStdDev{$_}*100/$$salesMedian{$_}));
-      }
-      if ($$rentalMedian{$_} > 0)
-      {
-         $rentalStdDevPercentInstance = commify(sprintf("%.2f", $$rentalStdDev{$_}*100/$$rentalMedian{$_}));
-      }
-      $noOfSaleListings = $$noOfSales{$_};      
-      if ($noOfSaleListings > 0)
-      {
-         $medianPriceInstance = commify(sprintf("\$%.0f", $$salesMedian{$suburbName}));
-      }
-      else
-      {
-         $medianPriceInstance = "\$0";         
-      }
-       
-      $minRentInstance = commify(sprintf("\$%.0f", $$minRentalPrice{$_}));
-      $maxRentInstance = commify(sprintf("\$%.0f", $$maxRentalPrice{$_}));
-      $noOfRentListings = $$noOfRentals{$_};
-      if ($noOfRentListings > 0)
-      {
+         
+         $noOfSales = $analysisTools->getNoOfSalesHash($category);
+         $noOfAdvertised = $analysisTools->getNoOfAdvertisedHash($category);
+         $noOfRentals = $analysisTools->getNoOfRentalsHash($category);
+         $salesMedian = $analysisTools->getSalesMedianHash($category);
+         $rentalMedian = $analysisTools->getRentalMedianHash($category);
+         $medianYield = $analysisTools->getMedianYieldHash($category);
+         
+         $minSalePrice = $analysisTools->getSalesMinHash($category);
+         $maxSalePrice = $analysisTools->getSalesMaxHash($category);
+         $salesStdDev = $analysisTools->getSalesStdDevHash($category);
+         $minRentalPrice = $analysisTools->getRentalMinHash($category);
+         $maxRentalPrice = $analysisTools->getRentalMaxHash($category);
+         $rentalStdDev = $analysisTools->getRentalStdDevHash($category);
+         $officialSalesMedian = $analysisTools->getOfficialSalesMedianHash();
+         $officialRentalMedian = $analysisTools->getOfficialRentalMedianHash();
+         
+         $minPriceInstance = commify(sprintf("\$%.0f", $$minSalePrice{$_}));
+         $maxPriceInstance = commify(sprintf("\$%.0f", $$maxSalePrice{$_}));
+         $salesStdDevInstance = commify(sprintf("\$%.0f", $$salesStdDev{$_}));
+         $rentalStdDevInstance = commify(sprintf("\$%.0f", $$rentalStdDev{$_}));     
+         if ($$salesMedian{$_} > 0)
+         {
+            $salesStdDevPercentInstance = commify(sprintf("%.2f", $$salesStdDev{$_}*100/$$salesMedian{$_}));
+         }
+         if ($$rentalMedian{$_} > 0)
+         {
+            $rentalStdDevPercentInstance = commify(sprintf("%.2f", $$rentalStdDev{$_}*100/$$rentalMedian{$_}));
+         }
+         $noOfSaleListings = $$noOfSales{$_};      
+         if ($noOfSaleListings > 0)
+         {
+            $medianPriceInstance = commify(sprintf("\$%.0f", $$salesMedian{$suburbName}));
+         }
+         else
+         {
+            $medianPriceInstance = "\$0";         
+         }
+         
+         
+         $noOfAdvertisedListings = $$noOfAdvertised{$_};
+          
+         $minRentInstance = commify(sprintf("\$%.0f", $$minRentalPrice{$_}));
+         $maxRentInstance = commify(sprintf("\$%.0f", $$maxRentalPrice{$_}));
+         $noOfSaleListings = $$noOfSales{$_};
+         $noOfRentListings = $$noOfRentals{$_};
+
          $medianRentInstance = commify(sprintf("\$%.0f", $$rentalMedian{$suburbName}));                  
    #      print "yield{$_}=", $$medianYield{$_}, "\n";
          $medianYieldInstance = sprintf("%.1f", $$medianYield{$_});
@@ -431,10 +453,42 @@ sub callback_analysisDataTable
          $officialRentalInstance = commify(sprintf("\$%.0f", $$officialRentalMedian{$_}));         
                 
          #<th>2br</th><th>3x1</th><th>3x2</th><th>4x2</th><th>4x3</th><th>5br</th></tr>\n";
-         print "<tr><td rows='2'>$suburbName</td><td>Sale</td><td>$minPriceInstance</td><td>$medianPriceInstance</td><td>$officialSalesInstance</td><td>$maxPriceInstance</td><td>$salesStdDevPercentInstance%</td><td><a href='", self_url(), "&suburb=", URI::Escape::uri_escape($suburbName),"'>$noOfSaleListings listings</a></td></tr>\n";
-         print "<tr><td></td><td>Rent</td><td>$minRentInstance</td><td>$medianRentInstance</td><td>$officialRentalInstance</td><td>$maxRentInstance</td><td>$rentalStdDevPercentInstance%</td><td>($noOfRentListings)</td></tr>\n";
-         print "<tr><td></td><td>Yield</td><td></td><td>%$medianYieldInstance</td><td></td></tr>\n";
+         #print "<tr><td rows='2'>$suburbName</td><td rowspan='2'>$category</td><td>Sale</td><td>$minPriceInstance</td><td>$medianPriceInstance</td><td>$officialSalesInstance</td><td>$maxPriceInstance</td><td>$salesStdDevPercentInstance%</td><td rowspan='2'>%$medianYieldInstance</td><td><a href='", self_url(), "&suburb=", URI::Escape::uri_escape($suburbName),"'>$noOfSaleListings listings</a></td></tr>\n";
+         #print "<tr><td></td><td>Rent</td><td>$minRentInstance</td><td>$medianRentInstance</td><td>$officialRentalInstance</td><td>$maxRentInstance</td><td>$rentalStdDevPercentInstance%</td><td>($noOfRentListings)</td></tr>\n";
+         if ($noOfSaleListings > 5)
+         {   
+            if ($noOfRentListings > 5)
+            {
+               if ($noOfAdvertisedListings > 0)
+               {
+                  print "<tr bgcolor='", $bgColour[$oddEvenToggle], "'><td rowspan='2'><a href='", self_url(), "&suburb=", URI::Escape::uri_escape($suburbName),"'>$suburbName</a></td><td rowspan='2'>$categoryName[0][$category]</td><td rowspan='2'>$categoryName[1][$category]</td><td rowspan='2'>$categoryName[2][$category]</td><td>Sale</td><td>$minPriceInstance</td><td>$medianPriceInstance</td><td>$maxPriceInstance</td><td>$salesStdDevPercentInstance%</td><td rowspan='2'>%$medianYieldInstance</td><td>$noOfAdvertisedListings adverts</td></tr>\n";
+               }
+               else
+               {
+                  print "<tr bgcolor='", $bgColour[$oddEvenToggle], "'><td rowspan='2'><a href='", self_url(), "&suburb=", URI::Escape::uri_escape($suburbName),"'>$suburbName</a></td><td rowspan='2'>$categoryName[0][$category]</td><td rowspan='2'>$categoryName[1][$category]</td><td rowspan='2'>$categoryName[2][$category]</td><td>Sale</td><td>$minPriceInstance</td><td>$medianPriceInstance</td><td>$maxPriceInstance</td><td>$salesStdDevPercentInstance%</td><td rowspan='2'>%$medianYieldInstance</td><td></td></tr>\n";
+               }
+               print "<tr bgcolor='", $bgColour[$oddEvenToggle]," '><td>Rent</td><td>$minRentInstance</td><td>$medianRentInstance</td><td>$maxRentInstance</td><td>$rentalStdDevPercentInstance%</td><td>($noOfRentListings)</td></tr>\n";
+               $outputSomething = 1;
+            }
+            else
+            {
+               #print "<tr><td rowspan='2'>$suburbName</td><td rowspan='2'>$categoryName[$category]</td><td>Sale</td><td>$minPriceInstance</td><td>$medianPriceInstance</td><td>$maxPriceInstance</td><td>$salesStdDevPercentInstance%</td><td rowspan='2'>?</td><td><a href='", self_url(), "&suburb=", URI::Escape::uri_escape($suburbName),"'>$noOfSaleListings listings</a></td></tr>\n";
+               #print "<tr><td>Rent</td><td colspan='4'>Insuffient Data Available</td></tr>\n";
+            }
+         }
+         else
+         {
+            #print "<tr><td rowspan='1'>$suburbName</td><td rowspan='1'>$categoryName[$category]</td><td colspan='8'>Insufficient Data Available</td></tr>\n";
+         }
+      
       }
+      
+      if ($outputSomething)
+      {
+         # alternate odd/even count
+         $oddEvenToggle = !$oddEvenToggle;  
+      }
+      
    }
       
    print "</table>\n";
@@ -452,9 +506,14 @@ sub callback_propertyList
    
    if ($suburbConstraintSet)
    {
-      print "<table><tr><th>Address</th><th>Lower</th><th>Upper</th><th>Estimated Rent</th><th>Estimated Yield</th></tr>\n";            
-   
+      print "<h2>Properties currently advertised in My Regions...</h2>";
+      print "<tt>Seen advertised in the last 14 days...</tt><br/>";
+      print "Order by address | Order by Cashflow | Order by Yield | Order by Price <br/>";
+      
       my $salesList = $analysisTools->getSalesDataList();         
+   
+      print "<table border='1'><tr><th align='center' colspan='4'>Advertised Property</th><th align='center' colspan='7'>Estimated Performance</th></tr>";
+      print "<tr><th>Address</th><th>Price</th><th>Beds</th><th>Baths</th><th>Rent p/w</th><th>Yield</th><th>Purchase Fees</th><th>Mortgage Fees</th><th>Annual Income</th><th>Annual Expenses</th><th>Cashflow</th></tr>\n";            
    
       # generate the table to display
       foreach (@$salesList)
@@ -466,18 +525,66 @@ sub callback_propertyList
          
          $addressInstance = $$_{'StreetNumber'}." ".$$_{'Street'}." ".$$_{'SuburbName'};
          $lowerPriceInstance = commify(sprintf("\$%.0f", $$_{'AdvertisedPriceLower'}));
-         $upperPriceInstance = commify(sprintf("\$%.0f", $$_{'AdvertisedPriceUpper'}));         
-         ($estimatedRent, $estimatedYield) = estimateRent($analysisTools, $_);
+         if ($$_{'AdvertisedPriceUpper'})
+         {
+            $upperPriceInstance = commify(sprintf("\$%.0f", $$_{'AdvertisedPriceUpper'}));         
+            $priceInstance = $lowerPriceInstance." - ". $upperPriceInstance;
+         }
+         else
+         {
+            $priceInstance = $lowerPriceInstance;
+         }
+         
+         ($estimatedRent, $estimatedYield, $purchaseCosts, $mortgageCosts, $annualIncome, $annualExpenses, $estimatedCashflow) = estimateRent($analysisTools, $_);
          $estimatedRentInstance = commify(sprintf("\$%.0f", $estimatedRent));
          $estimatedYieldInstance = sprintf("%.1f", $estimatedYield);
+         $estimatedPurchaseCostsInstance = sprintf("\$%.0f", $purchaseCosts);
+         $estimatedMortgageCostsInstance = sprintf("\$%.0f", $mortgageCosts);
+         $estimatedAnnualIncomeInstance = sprintf("\$%.0f", $annualIncome);
+         $estimatedAnnualExpensesInstance = sprintf("\$%.0f", $annualExpenses);
+         $estimatedCashflowInstance = sprintf("\$%.2f", $estimatedCashflow);
+         $bedsInstance = sprintf("%i", $$_{'Bedrooms'});        
+         $bathsInstance = sprintf("%i", $$_{'Bathrooms'});
+
          
          #<th>2br</th><th>3x1</th><th>3x2</th><th>4x2</th><th>4x3</th><th>5br</th></tr>\n";
-         print "<tr><td>$addressInstance</td><td>$lowerPriceInstance</td><td>$upperPriceInstance</td><td>$estimatedRentInstance</td><td>%$estimatedYieldInstance</td></tr>\n";            
+         print "<tr><td><a href=''>$addressInstance</a></td><td>$priceInstance</td><td>$bedsInstance</td><td>$bathsInstance</td><td>$estimatedRentInstance</td><td>$estimatedYieldInstance%</td><td>$estimatedPurchaseCostsInstance</td><td>$estimatedMortgageCostsInstance</td><td>$estimatedAnnualIncomeInstance</td><td>$estimatedAnnualExpensesInstance</td><td>$estimatedCashflowInstance p/w</td></tr>\n";            
+      }
+      
+      print "</table>\n";
+      
+      print "<h2>Related Rental Properties in My Regions...</h2>";
+      print "<tt>Rental properties seen advertised in the last 3 months...</tt><br/>";
+      my $rentalsList = $analysisTools->getRentalDataList();
+       
+      print "<table border='1'><tr><th align='center' colspan='4'>Advertised Rental</th></tr>";
+      print "<tr><th>Date Entered</th><th>Last Seen</th><th>Address</th><th>Rent p/w</th><th>Beds</th><th>Baths</th></tr>\n";            
+      
+      # generate the table to display
+      foreach (@$rentalsList)
+      {      
+         # $_ is a reference to a hash
+         
+         #$suburbName = URI::Escape::uri_escape($_);      
+         $suburbName = $$_{'SuburbName'};
+
+         $dateEnteredInstance = $$_{'DateEntered'};
+         $lastEncounteredInstance = $$_{'LastEncountered'};
+         
+         $addressInstance = $$_{'StreetNumber'}." ".$$_{'Street'}." ".$$_{'SuburbName'};
+         $rentInstance = commify(sprintf("\$%.0f", $$_{'AdvertisedWeeklyRent'}));
+         $bedsInstance = sprintf("%i", $$_{'Bedrooms'});        
+         $bathsInstance = sprintf("%i", $$_{'Bathrooms'});
+
+         
+         #<th>2br</th><th>3x1</th><th>3x2</th><th>4x2</th><th>4x3</th><th>5br</th></tr>\n";
+         print "<tr><td>$dateEnteredInstance</td><td>$lastEncounteredInstance</td><td><a href=''>$addressInstance</a></td><td>$rentInstance</td><td>$bedsInstance</td><td>$bathsInstance</td></tr>\n";            
       }
       
       print "</table>\n";
    }
       
+   
    return undef;   
 }
 

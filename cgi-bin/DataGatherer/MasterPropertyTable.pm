@@ -17,7 +17,9 @@
 #    by looking up the components (via the XRef) and applying a selection algorithm.
 #             - needed to use AdvertisedPropertyProfiles reference to lookup components (of workingview) - impacts
 #    constructor
-#
+#  5 Jan 2004 - altered MasterPropertyTable to include a field dateLastAdvertised which is the most recent of the
+#   date entered or last encountered field for the components.  It's needed to to look for properties that 
+#   have been recently advertised, otherwise all the components would need to be checked.
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -104,11 +106,13 @@ my $SQL_CREATE_TABLE_BODY =
     "Land INTEGER, ". 
     "YearBuiltSource INTEGER UNSIGNED ZEROFILL, ".
     "YearBuilt VARCHAR(5), ".
+    "DateLastAdvertised DATETIME NOT NULL, ".
     "AdvertisedPriceSource INTEGER UNSIGNED ZEROFILL, ".
     "AdvertisedPriceLower DECIMAL(10,2), ".
     "AdvertisedPriceUpper DECIMAL(10,2), ".
     "AdvertisedWeeklyRentSource INTEGER UNSIGNED ZEROFILL, ".
-    "AdvertisedWeeklyRent DECIMAL(10,2)";        
+    "AdvertisedWeeklyRent DECIMAL(10,2),".
+    "INDEX (StreetNumber(5),StreetName(10), SuburbIndex)";        
     
 my $SQL_CREATE_TABLE_SUFFIX = ")";
            
@@ -228,7 +232,7 @@ sub linkRecord
    my $sqlClient = $this->{'sqlClient'};
    my $statementText;
    my $tableName = $this->{'tableName'};
-   my $advertisedSaleProfiles = $this{'advertisedSaleProfiles'};
+   my $advertisedSaleProfiles = $this->{'advertisedSaleProfiles'};
    
    my $identifier = -1;
   
@@ -336,6 +340,7 @@ sub _setMasterComponents
    my $land = shift;
    my $yearBuiltSource = shift;
    my $yearBuilt = shift;
+   my $dateLastAdvertised = shift;
    my $advertisedPriceSource = shift;
    my $advertisedPriceLower = shift;
    my $advertisedPriceUpper = shift;
@@ -363,6 +368,7 @@ sub _setMasterComponents
                        "Land = ". $sqlClient->quote($land). ", ".
                        "YearBuiltSource = ". $sqlClient->quote($yearBuiltSource). ", ".
                        "YearBuilt = ". $sqlClient->quote($yearBuilt). ", ".
+                       "DateLastAdvertised = ". $sqlClient->quote($dateLastAdvertised). ", ".
                        "AdvertisedPriceSource = ". $sqlClient->quote($advertisedPriceSource). ", ".
                        "AdvertisedPriceLower = ". $sqlClient->quote($advertisedPriceLower). ", ".
                        "AdvertisedPriceUpper = ". $sqlClient->quote($advertisedPriceUpper). ", ".
@@ -645,12 +651,14 @@ sub _calculateMasterComponents
      
       # get all the components for the property
       
-      @selectResults = $sqlClient->doSQLSelect("select Identifier, AdvertisedPriceUpper, AdvertisedPriceLower, Type, Bedrooms, Bathrooms, Land, YearBuilt from WorkingView_AdvertisedSaleProfiles where ComponentOf = $quotedPID order by DateEntered desc");
+      @selectResults = $sqlClient->doSQLSelect("select unix_timestamp(DateEntered) as UnixDateEntered, unix_timestamp(LastEncountered) as UnixLastEncountered, DateEntered, LastEncountered, Identifier, AdvertisedPriceUpper, AdvertisedPriceLower, Type, Bedrooms, Bathrooms, Land, YearBuilt from WorkingView_AdvertisedSaleProfiles where (ComponentOf = $quotedPID) order by DateEntered desc");
              
       # --- apply association/master component selection algorithms ---
       
       $length = @selectResults;
-      print "PID $propertyIdentifier : $length components ";
+      print "PID $propertyIdentifier : $length components\n";
+      $unixDateLastAdvertised = 0;
+      $dateLastAdvertised = undef;
       $advertisedPriceComponent = undef;
       $typeComponent = undef;
       $bedroomsComponent = undef;
@@ -669,6 +677,42 @@ sub _calculateMasterComponents
       foreach (@selectResults)
       {
          #print "CID:", $$_{'Identifier'}, "\n";
+         # determine if the date this component was last encountered is newer than the previous compoent
+         if ($$_{'UnixLastEncountered'})
+         {
+            if (!$unixDateLastAdvertised)
+            {
+               $unixDateLastAdvertised = $$_{'UnixLastEncountered'};
+               $dateLastAdvertised = $$_{'LastEncountered'};          # sql DATETIME format
+            }
+            else
+            {
+               if ($$_{'UnixLastEncountered'} > $unixDateLastAdvertised)
+               {
+                  $unixDateLastAdvertised = $$_{'UnixLastEncountered'};
+                  $dateLastAdvertised = $$_{'LastEncountered'};          # sql DATETIME format
+               }
+            }
+         }
+         else
+         {
+            # check dateEntered
+            if (!$unixDateLastAdvertised)
+            {
+               $unixDateLastAdvertised = $$_{'UnixDateEntered'};
+               $dateLastAdvertised = $$_{'DateEntered'};             # sql DATETIME representation
+            }
+            else
+            {
+               if ($$_{'UnixDateEntered'} > $unixDateLastAdvertised)
+               {
+                  $unixDateLastAdvertised = $$_{'UnixDateEntered'};
+                  $dateLastAdvertised = $$_{'DateEntered'};          # sql DATETIME representation
+               }
+            }
+         }
+         print "   DLA: $unixDateLastAdvertised CID:", $$_{'Identifier'}, " DE '", ($$_{'UnixDateEntered'}), "' LE '", ($$_{'UnixLastEncountered'}), "' \n";
+         
          # if price isn't set yet
          if ((!$advertisedPriceComponent) && ($$_{'AdvertisedPriceLower'}))
          {
@@ -715,10 +759,10 @@ sub _calculateMasterComponents
       }
       
       #print "$propertyIdentifier: $typeComponent=$type, $bedroomsComponent=$bedrooms, $bathroomsComponent=$bathrooms, $landComponent=$land, $yearBuiltComponent=$yearBuilt, $advertisedPriceComponent=$advertisedPriceLower&$advertisedPriceUpper\n";
-print "T", defined $typeComponent || 0, "B", defined $bedroomsComponent || 0, "B", defined $bathroomsComponent || 0, "L", defined $landComponent || 0, "Y", defined $yearBuiltComponent || 0, "P", defined $advertisedPriceComponent || 0, "Rx\n";
+print "      T", defined $typeComponent || 0, "B", defined $bedroomsComponent || 0, "B", defined $bathroomsComponent || 0, "L", defined $landComponent || 0, "Y", defined $yearBuiltComponent || 0, "P", defined $advertisedPriceComponent || 0, "Rx\n";
       # update the MasterPropertyTable with the master profile and component identifier references
       $success = $this->_setMasterComponents($propertyIdentifier, $typeComponent, $type, $bedroomsComponent, $bedrooms, $bathroomsComponent, 
-         $bathrooms, $landComponent, $land, $yearBuiltComponent, $yearBuilt, $advertisedPriceComponent, $advertisedPriceLower,
+         $bathrooms, $landComponent, $land, $yearBuiltComponent, $yearBuilt, $dateLastAdvertised, $advertisedPriceComponent, $advertisedPriceLower,
          $advertisedPriceUpper, undef, undef);
    }
    

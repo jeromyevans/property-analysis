@@ -727,28 +727,55 @@ sub maintenance_ValidateSaleContents
    @regExSubstitutionPatterns = $sqlClient->doSQLSelect("select * from Validator_RegExSubstitutes"); 
 
    $printLogger->print("Fetching INVALID database records from WORKING VIEW...\n");
-   
-   @selectResult = $sqlClient->doSQLSelect("select * from WorkingView_AdvertisedSaleProfiles where ValidityCode > 0 order by DateEntered");
-   $length = @selectResult;
-   $printLogger->print("   $length records.\n");
-
-   $printLogger->print("Performing database validation...\n");
-
-   $transactionNo = 0;
-   foreach (@selectResult)
+     
+   @selectResult = $sqlClient->doSQLSelect("select count(suburbname) as Count from WorkingView_AdvertisedSaleProfiles where ValidityCode > 0 order by DateEntered");
+   $noOfRecords = $selectResult[0]{'Count'};
+   $recordsProcessed = 0;
+   $printLogger->print("   $noOfRecords invalid records...processing in segments (to limit memory consumption)\n");
+   $offset = 0;
+   $validRecords = 0;
+   $recordsChanged = 0;
+   $length = 1;
+  
+   while (($recordsProcessed < $noOfRecords) && ($length > 0))
    {
-      # $_ is a reference to a hash for the row of the table
-      $oldChecksum = $$_{'checksum'};
-      #$printLogger->print($$_{'DateEntered'}, " ", $$_{'SourceName'}, " ", $$_{'SuburbName'}, "(", $_{'SuburbIndex'}, ") oldChecksum=", $$_{'Checksum'});
+      #print "select * from WorkingView_AdvertisedSaleProfiles where ValidityCode > 0 order by DateEntered limit $offset, 10000\n";
+      @selectResult = $sqlClient->doSQLSelect("select * from WorkingView_AdvertisedSaleProfiles where ValidityCode > 0 order by DateEntered limit $offset, 10000");
+      $length = @selectResult;
+      $printLogger->print("   processing $length records...\n");
 
-      $changed = validateRecord($sqlClient, $_, \@regExSubstitutionPatterns, $advertisedSaleProfiles, $instanceID, $transactionNo);
-      if ($changed)
+      $printLogger->print("      performing record validation...\n");
+      $validRecords = 0;
+      foreach (@selectResult)
       {
-         $transactionNo++;
-         print "   changed $transactionNo records\n";
+         # $_ is a reference to a hash for the row of the table
+         $oldChecksum = $$_{'checksum'};
+         #$printLogger->print($$_{'DateEntered'}, " ", $$_{'SourceName'}, " ", $$_{'SuburbName'}, "(", $_{'SuburbIndex'}, ") oldChecksum=", $$_{'Checksum'});
+   
+         ($changed, $validityCode) = validateRecord($sqlClient, $_, \@regExSubstitutionPatterns, $advertisedSaleProfiles, $instanceID, $transactionNo);
+         if ($changed)
+         {
+            $transactionNo++;
+            $recordsChanged++;
+         }
+         if ($validityCode == 0)
+         {
+            $validRecords++;
+         }
       }
+      
+      $percent = sprintf("%0.2f", ($validRecords / $length) * 100.0);
+      print "      changed $transactionNo records ($validRecords ($percent%) records marked valid)\n";
+      
+      # count the total number of records processed
+      $recordsProcessed += $length;
+      # the offset is updated by the number of records read SUBTRACT the number of records that were 
+      # marked invalid because the next select won't include those
+      $offset += ($length - $validRecords);
+      #print "offset=$offset\n";
    }
-   print "   Validation complete. $transactionNo records 'changed'.\n";
+   
+   print "   Validation complete. $recordsChanged records 'changed'.\n";
 
    $sqlClient->disconnect();
 
@@ -1056,7 +1083,7 @@ sub maintenance_UpdateProperties
    
    $printLogger->print("Updating properties...\n");
 
-   maintenance_ValidateSaleContents($printLogger, $instanceID);
+   #maintenance_ValidateSaleContents($printLogger, $instanceID);
    
    
    my $sqlClient = SQLClient::new(); 

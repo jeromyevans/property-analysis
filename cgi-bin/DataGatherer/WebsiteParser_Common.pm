@@ -906,18 +906,18 @@ sub assessRecordValidity
    {
       #print $$profileRef{'Identifier'}, ": $validityCode '", $$profileRef{'StreetNumber'}, "' '", $$profileRef{'Street'}, "' ", $$profileRef{'SuburbName'}, "(", $$profileRef{'SuburbIndex'}, ") \n";
       
-      #if (($validityCode & 8) > 0)
-      #{
-      #   print "   suburbInvalid\n";
-      #}
-      #if (($validityCode & 4) > 0)
-      #{
-      #   print "   streetInvalid\n";
-      #}
-      #if (($validityCode & 2) > 0)
-      #{
-      #   print "   streetNumberInvalid\n";
-      #}
+      if (($validityCode & 8) > 0)
+      {
+       #  print "   suburbInvalid\n";
+      }
+      if (($validityCode & 4) > 0)
+      {
+        # print "   streetInvalid\n";
+      }
+      if (($validityCode & 2) > 0)
+      {
+         #print "   streetNumberInvalid\n";
+      }
    }
    
    return $validityCode;
@@ -986,6 +986,7 @@ sub validateRecord
    my %changedProfile;
    my $changed = 0;
    my $success = 0;
+   my $validityCode = 1;
    
    # if the suburbIndex isn't set then try to fix the suburb name
    if (!$$profileRef{'SuburbIndex'})
@@ -1050,7 +1051,7 @@ sub validateRecord
          
    }
    
-   return $success;
+   return ($success, $validityCode);
 }
 
 # -------------------------------------------------------------------------------------------------
