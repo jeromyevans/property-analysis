@@ -405,8 +405,7 @@ sub doSQLSelect
    {
       # get the array of rows from the table
       @selectResult = $this->fetchResults();                                                
-   }                    
-    
+   }                        
    
    return @selectResult;   
 }  

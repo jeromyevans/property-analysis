@@ -99,7 +99,7 @@ my $useHTML = param('html');
 
 if (!$useHTML)
 {
-   $useText = 0; ##############################********************######  
+   $useText = 0; 
 }
 
 if (!$agent)

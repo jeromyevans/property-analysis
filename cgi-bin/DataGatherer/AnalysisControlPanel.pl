@@ -23,10 +23,14 @@ use SuburbProfiles;
 use DebugTools;
 use AdvertisedRentalProfiles;
 use AdvertisedSaleProfiles;
-
+use AnalysisTools;
 use HTMLTemplate;
 #use URI::Escape::uri_escape;
 use URI;
+
+# instance of the analysis tools object
+my $analysisTools;
+my $suburbConstraintSet;
 
 # -------------------------------------------------------------------------------------------------
 # commify - inserts commas into a number - directly out of Perl Cookbook 2.17
@@ -66,18 +70,25 @@ my %validBedrooms= (1=>"",
 # returns a value representing the number of bedrooms
 sub getBedrooms
 {     
+   my $analysisTools = shift;
    my $bedroomsParam = param('bedrooms');
 
    if ((defined $bedroomsParam) && (exists $validBedrooms{$bedroomsParam}))
    
-   {     
-      $bedroomsSearch = "and Bedrooms = $bedroomsParam";
+   {                 
       $bedroomsDescription = $bedroomsParam;
+      if ($analysisTools)
+      {
+         $analysisTools->setBedroomsConstraint($bedroomsParam);
+      }
    }
    else
-   {
-      $bedroomsSearch = "";
+   {      
       $bedroomsDescription = "any";
+      if ($analysisTools)
+      {
+         $analysisTools->setBedroomsConstraint(undef);
+      }
    }
    
    return $bedroomsDescription;   
@@ -94,17 +105,24 @@ my %validBathrooms= (1=>"",
 # returns a value representing the number of bathrooms
 sub getBathrooms
 {   
+   my $analysisTools = shift;   
    my $bathroomsParam = param('bathrooms');
       
    if ((defined $bathroomsParam) && (exists $validBathrooms{$bathroomsParam}))
-   {     
-      $bathroomsSearch = "and Bathrooms = $bathroomsParam";
+   {           
       $bathroomsDescription = $bathroomsParam;
+      if ($analysisTools)
+      {
+         $analysisTools->setBathroomsConstraint($bathroomsParam);
+      }
    }
    else
-   {            
-      $bathroomsSearch = "";
+   {                  
       $bathroomsDescription = "any";
+      if ($analysisTools)
+      {
+         $analysisTools->setBathroomsConstraint(undef);
+      }
    }
       
    return $bathroomsDescription;
@@ -120,30 +138,36 @@ my %validTypes = ('house'=>"",
 # returns a value representing the type for the search
 sub getType
 {  
+   my $analysisTools = shift;
    my $typeParam = param('type');
            
    if ((defined $typeParam) && (exists $validTypes{$typeParam}))
    {   
       if ($typeParam == 'house')
-      {
-         $typeSearch = "Type like '%house%'";
+      {         
          $typeDescription = "Houses";
       }
       elsif ($typeParam == 'unit') 
-      {
-         $typeSearch = "Type like '%Apartment%' or Type like '%Flats%' or Type like '%Unit%' or Type like '%Townhouse%' or Type like '%Villa%'";
+      {         
          $typeDescription = "Units, Flats, Townhouses, Villas etc";
       }
       else
-      {
-         $typeSearch = "Type not like '%Land%' and Type not like '%Lifestyle%'";
+      {         
          $typeDescription = "any";
+      }
+      
+      if ($analysisTools)
+      {
+         $analysisTools->setTypeConstraint($typeParam);
       }
    }
    else
-   {
-      $typeSearch = "Type not like '%Land%' and Type not like '%Lifestyle%'";
+   {      
       $typeDescription = "any";
+      if ($analysisTools)
+      {
+         $analysisTools->setTypeConstraint(undef);
+      }
    }   
    
    return $typeDescription;
@@ -153,7 +177,8 @@ sub getType
 # This hash defines valid keys for the orderby parameter
 my %validOrderBy = ('suburb'=>"",
                     'sale'=>"",
-                    'rent'=>"");
+                    'rent'=>"",
+                    'yield'=>"");
 
 # -------------------------------------------------------------------------------------------------
 # getOrderBy
@@ -174,6 +199,26 @@ sub getOrderBy
    return $typeDescription;
 }
 
+# -------------------------------------------------------------------------------------------------
+# getSuburbName
+# returns a value representing which suburb to limit the analysis to
+sub getSuburbName
+{ 
+   my $suburbParam = param('suburb');
+           
+   if (defined $suburbParam)
+   {         
+      $analysisTools->setSuburbConstraint($suburbParam);
+      $suburbConstraintSet = 1;
+   }
+   else
+   {
+      $analysisTools->setSuburbConstraint(undef);
+      $suburbConstraintSet = 0;
+   }   
+   
+   return $typeDescription;
+}
 
 # -------------------------------------------------------------------------------------------------
 # callback_bedrooms
@@ -200,198 +245,147 @@ sub callback_type
 }
 
 # -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+# estimate the rent for a particular property using the current analysis parameters
+sub estimateRent
+
+{      
+   my $analysisTools = shift;
+   my $propertyDataHashRef = shift;
+   
+   my $housePrice;
+   my %salesMean;
+   my %salesStdDev;
+   my %rentalStdDev;
+   my %rentalMean;                         
+     
+   $suburbName = $$propertyDataHashRef{'SuburbName'};       
+   $suburbName =~ tr/[A-Z]/[a-z]/;      
+   
+   ($officialSalesMean, $officialRentalMean) = $analysisTools->fetchOfficialMeans($suburbName);
+   
+   # for the house price, use the lower of the two available values
+   # (to give worse result)
+   $housePrice = $$propertyDataHashRef{'AdvertisedPriceLower'};  
+      
+   
+   $salesMean = $analysisTools->getSalesMeanHash();
+   $salesStdDev = $analysisTools->getSalesStdDevHash();
+   $rentalMean = $analysisTools->getRentalMeanHash();
+   $rentalStdDev = $analysisTools->getRentalStdDevHash();
+   
+   if ($housePrice > 0)
+   {
+      #$delta = $housePrice - $$salesMean{$suburbName};
+      $delta = $housePrice - $officialSalesMean;
+           
+      if ($$salesStdDev{$suburbName} > 0)
+      {
+         $ratio = $delta / $$salesStdDev{$suburbName};                 
+      }
+      else
+      {      
+         $ratio = 0;         
+      }
+      
+         
+      if ($$rentalStdDev{$suburbName} > 0)
+      {
+         #$estimatedRent = ($ratio * $$rentalStdDev{$suburbName}) + $$rentalMean{$suburbName};
+         $estimatedRent = ($ratio * $$rentalStdDev{$suburbName}) + $officialRentalMean;         
+         # round down to the nearest $10.
+         $estimatedRent = int($estimatedRent / 10) * 10;         
+      }
+      else
+      {
+         $estimatedRent = 0;
+      }              
+      
+      $estimatedYield = ($estimatedRent * 5200) /  $housePrice;      
+   }       
+      
+   return ($estimatedRent, $estimatedYield);   
+}
+
+# -------------------------------------------------------------------------------------------------
 # callback_analysisDataTable
 # returns a table containing a list of all the analysis restuls
 sub callback_analysisDataTable
-{   
-   my @tableLines;
-   my $index = 0;
-   my $agentStatusClient;
-   my @selectResults;
-             
-   $index = 0;           
-                 
-   getBedrooms();
-   getBathrooms();
-   getType();
+{         
+   my @suburbList;
+   my $index = 0;   
+   
    getOrderBy();
       
-   print "<table><tr><th>Suburb</th><th>Field</th><th>Min</th><th>Mean</th><th>Max</th><th>(Sample Size)</th></tr>\n";      
-      
-   @selectResults = $sqlClient->doSQLSelect("select SuburbName, AdvertisedPriceLower, AdvertisedPriceUpper, Bedrooms, Bathrooms from AdvertisedSaleProfiles where ".$typeSearch." ".$bedroomsSearch." ".$bathroomsSearch." order by SuburbName, Bedrooms, Bathrooms");   
-      
-   $length = @selectResults;
+   print "<table><tr><th>Suburb</th><th>Field</th><th>Min</th><th>Mean</th><th>Median</th><th>Max</th><th>StdDev</th><th>(Sample Size)</th></tr>\n";            
    
-   #selectResults is a big array of hashes      
-   foreach (@selectResults)
-   {
-      $suburbName = $$_{'SuburbName'};
-      $suburbName =~ tr/[A-Z]/[a-z]/;
+   $analysisTools->calculateSalesAnalysis();
+   $analysisTools->calculateRentalAnalysis();
+   $analysisTools->calculateYield();   
       
-      # use the max of the two prices (sometimes only the lower is defined)
-      if (defined $$_{'AdvertisedSalePriceHigher'})
-      {
-         $highPrice = $$_{'AdvertisedPriceHigher'};
-      }
-      else
-      {
-         $highPrice = $$_{'AdvertisedPriceLower'};  
-      }              
-         
-      # calculate the total of price for calculation of the mean
-      if (defined $meanTotal{$suburbName})
-      {
-         $meanTotal{$suburbName} += $highPrice;
-      }
-      else
-      {
-         $meanTotal{$suburbName} = $highPrice;
-      }      
-      
-      # count the number of listings in the suburb
-      if (defined $listings{$suburbName})
-      {         
-         $listings{$suburbName} += 1;
-      }
-      else
-      {
-         $listings{$suburbName} = 1;
-      }
-                  
-      # record the lowest-high price listed for this suburb
-      if ((!defined $minPrice{$suburbName}) || ($highPrice < $minPrice{$suburbName}))
-      {
-         $minPrice{$suburbName} = $highPrice;
-      }
-      
-      # record the highest-high price listed for this suburb
-      if ((!defined $maxPrice{$suburbName}) || ($highPrice > $maxPrice{$suburbName}))
-      {
-         $maxPrice{$suburbName} = $highPrice;
-      }      
-   }         
+   $noOfSales = $analysisTools->getNoOfSalesHash();
+   $noOfRentals = $analysisTools->getNoOfRentalsHash();
+   $salesMean = $analysisTools->getSalesMeanHash();
+   $rentalMean = $analysisTools->getRentalMeanHash();
+   $meanYield = $analysisTools->getMeanYieldHash();
    
-   # ------------ Get rental properties -----------------
-   @selectResults = $sqlClient->doSQLSelect("select SuburbName, AdvertisedWeeklyRent, Bedrooms, Bathrooms from AdvertisedRentalProfiles where ".$typeSearch." ".$bedroomsSearch." ".$bathroomsSearch." order by SuburbName, Bedrooms, Bathrooms");      
-   
-   $length = @selectResults;
-      
-   #selectResults is a big array of hashes      
-   foreach (@selectResults)
-   {
-   
-      $suburbName = $$_{'SuburbName'};
-      $suburbName =~ tr/[A-Z]/[a-z]/;
-   
-      # calculate the total of price for calculation of the mean
-      if (defined $rentalMeanTotal{$suburbName})
-      {
-         $rentalMeanTotal{$suburbName} += $$_{'AdvertisedWeeklyRent'};
-      }
-      else
-      {
-         $rentalMeanTotal{$suburbName} = $$_{'AdvertisedWeeklyRent'};
-      }      
-      
-      # count the number of listings in the suburb
-      if (defined $rentalListings{$suburbName})
-      {         
-         $rentalListings{$suburbName} += 1;
-      }
-      else
-      {
-         $rentalListings{$suburbName} = 1;
-      }
-                  
-      # record the lowest-high price listed for this suburb
-      if ((!defined $rentalMinPrice{$suburbName}) || ($$_{'AdvertisedWeeklyRent'} < $rentalMinPrice{$suburbName}))
-      {
-         $rentalMinPrice{$suburbName} = $$_{'AdvertisedWeeklyRent'};
-      }
-      
-      # record the highest-high price listed for this suburb
-      if ((!defined $rentalMaxPrice{$suburbName}) || ($$_{'AdvertisedWeeklyRent'} > $rentalMaxPrice{$suburbName}))
-      {
-         $rentalMaxPrice{$suburbName} = $$_{'AdvertisedWeeklyRent'};
-      }      
-   }
-         
-   # loop through all the suburbs again to calculate the yield
-   foreach (keys %listings)
-   {   
-      if ($minPrice{$_} > 0)
-      {         
-         $minYield{$_} = ($rentalMinPrice{$_} * 5200) / $minPrice{$_};      
-      }
-      else
-      {
-         $minYield{$_} = 0;
-      }
-      if ($maxPrice{$_} > 0)
-      {
-         $maxYield{$_} = ($rentalMaxPrice{$_} * 5200) / $maxPrice{$_};
-      }
-      else
-      {
-         $maxYield{$_} = 0;
-      }
-      if (($rentalListings{$_} > 0) && ($listings{$_} > 0))
-      {
-         $meanYield{$_} = (($rentalMeanTotal{$_} / $rentalListings{$_}) * 5200) / ($meanTotal{$_} / $listings{$_});
-      }
-      else
-      {
-         $meanYield{$_} = 0;
-      }
-   }
-         
    # get the list of suburbs from the keys of listings (any of the hashes would do)
    # and sort it into alphabetical order   
-   if ($orderBy eq 'suburbs')
-   {
+   if ($orderBy eq 'suburb')
+   {      
       # order by suburbs alphabetically
-      @suburbList = sort keys %listings;
+      @suburbList = sort keys %$noOfSales;      
    }
    elsif ($orderBy eq 'sale')
    {            
       $index = 0;
-      # sort the suburb names by the values of the mean total
-      # ie. calls sort on the keys (suburbs) of meanTotal but uses cmp to compare the values of each key      
-      foreach (sort { $meanTotal{$a} cmp $meanTotal{$b} } keys %meanTotal)           
-      {                              
+   
+      # sort the suburb names by the values of the mean                   
+      foreach (sort { $$salesMean{$b} <=> $$salesMean{$a} } keys %$salesMean)           
+      {                                        
           $suburbList[$index] = $_;
           $index++;
       }            
    }
-   elsif ($orderby eq 'rent')
+   elsif ($orderBy eq 'rent')
    {
       $index = 0;
       # sort the suburb names by the values of the rental mean total
-      # ie. calls sort on the keys (suburbs) of rentalmeanTotal but uses cmp to compare the values of each key      
-      foreach (sort { $rentalMeanTotal{$a} cmp $rentalMeanTotal{$b} } keys %rentalMeanTotal)           
+      # ie. calls sort on the keys (suburbs) of rentalsumOfSalePrices but uses <=> to compare the values of each key      
+      foreach (sort { $$rentalMean{$b} <=> $$rentalMean{$a} } keys %$rentalMean)           
       {                              
           $suburbList[$index] = $_;
           $index++;
       }      
    }
-   elsif ($orderby eq 'yield')
+   elsif ($orderBy eq 'yield')
    {
-      $index = 0;
+      $index = 0;      
       # sort the suburb names by the values of the yield
       # ie. calls sort on the keys (suburbs) of yeild but uses cmp to compare the values of each key      
-      foreach (sort { $meanYield{$a} cmp $meanYield{$b} } keys %meanYield)           
+      foreach (sort { $$meanYield{$b} <=> $$meanYield{$a} } keys %$meanYield)           
       {                              
           $suburbList[$index] = $_;
           $index++;
       }      
    }
    else
-   {
+   {      
       # order by suburbs alphabetically
-      @suburbList = sort keys %listings;
+      @suburbList = sort keys %$noOfSales;
    }   
-   
-   #DebugTools::printList("suburbList", \@suburbList);
+      
+   $length=@suburbList;
+
+   $minSalePrice = $analysisTools->getSalesMinHash();
+   $maxSalePrice = $analysisTools->getSalesMaxHash();
+   $salesStdDev = $analysisTools->getSalesStdDevHash();
+   $minRentalPrice = $analysisTools->getRentalMinHash();
+   $maxRentalPrice = $analysisTools->getRentalMaxHash();
+   $rentalStdDev = $analysisTools->getRentalStdDevHash();
+   $officialSalesMedian = $analysisTools->getOfficialSalesMedianHash();
+   $officialRentalMedian = $analysisTools->getOfficialRentalMedianHash();
    
    # generate the table to display
    foreach (@suburbList)
@@ -400,33 +394,44 @@ sub callback_analysisDataTable
       
       #$suburbName = URI::Escape::uri_escape($_);
       $suburbName = $_;
-      $minPriceInstance = commify(sprintf("\$%.0f", $minPrice{$_}));
-      $maxPriceInstance = commify(sprintf("\$%.0f", $maxPrice{$_}));
-      $noOfSaleListings = $listings{$_};
+            
+      $minPriceInstance = commify(sprintf("\$%.0f", $$minSalePrice{$_}));
+      $maxPriceInstance = commify(sprintf("\$%.0f", $$maxSalePrice{$_}));
+      $salesStdDevInstance = commify(sprintf("\$%.0f", $$salesStdDev{$_}));
+      $rentalStdDevInstance = commify(sprintf("\$%.0f", $$rentalStdDev{$_}));     
+      if ($$salesMean{$_} > 0)
+      {
+         $salesStdDevPercentInstance = commify(sprintf("%.2f", $$salesStdDev{$_}*100/$$salesMean{$_}));
+      }
+      if ($$rentalMean{$_} > 0)
+      {
+         $rentalStdDevPercentInstance = commify(sprintf("%.2f", $$rentalStdDev{$_}*100/$$rentalMean{$_}));
+      }
+      $noOfSaleListings = $$noOfSales{$_};      
       if ($noOfSaleListings > 0)
       {
-         $meanPriceInstance = commify(sprintf("\$%.0f", $meanTotal{$_} / $noOfSaleListings));
+         $meanPriceInstance = commify(sprintf("\$%.0f", $$salesMean{$suburbName}));
       }
       else
       {
-         $meanPriceInstance = "\$0";
+         $meanPriceInstance = "\$0";         
       }
        
-      $minRentInstance = commify(sprintf("\$%.0f", $rentalMinPrice{$_}));
-      $maxRentInstance = commify(sprintf("\$%.0f", $rentalMaxPrice{$_}));
-      $noOfRentListings = $rentalListings{$_};
+      $minRentInstance = commify(sprintf("\$%.0f", $$minRentalPrice{$_}));
+      $maxRentInstance = commify(sprintf("\$%.0f", $$maxRentalPrice{$_}));
+      $noOfRentListings = $$noOfRentals{$_};
       if ($noOfRentListings > 0)
       {
-         $meanRentInstance = commify(sprintf("\$%.0f", $rentalMeanTotal{$_} / $noOfRentListings));                  
-         
-         $minYieldInstance = sprintf("%.1f", $minYield{$_});
-         $maxYieldInstance = sprintf("%.1f", $maxYield{$_});
-         $meanYieldInstance = sprintf("%.1f", $meanYield{$_});
+         $meanRentInstance = commify(sprintf("\$%.0f", $$rentalMean{$suburbName}));                  
+                  
+         $meanYieldInstance = sprintf("%.1f", $$meanYield{$_});
+         $medianSaleInstance = commify(sprintf("\$%.0f", $$officialSalesMedian{$_}));
+         $medianRentalInstance = commify(sprintf("\$%.0f", $$officialRentalMedian{$_}));         
                 
          #<th>2br</th><th>3x1</th><th>3x2</th><th>4x2</th><th>4x3</th><th>5br</th></tr>\n";
-         print "<tr><td rows='2'>$suburbName</td><td>Sale</td><td>$minPriceInstance</td><td>$meanPriceInstance</td><td>$maxPriceInstance</td><td>($noOfSaleListings)</td></tr>\n";
-         print "<tr><td></td><td>Rent</td><td>$minRentInstance</td><td>$meanRentInstance</td><td>$maxRentInstance</td><td>($noOfRentListings)</td></tr>\n";
-         print "<tr><td></td><td>Yield</td><td>%$minYieldInstance</td><td>%$meanYieldInstance</td><td>%$maxYieldInstance</td><td></td></tr>\n";
+         print "<tr><td rows='2'>$suburbName</td><td>Sale</td><td>$minPriceInstance</td><td>$meanPriceInstance</td><td>$medianSaleInstance</td><td>$maxPriceInstance</td><td>$salesStdDevInstance/(%$salesStdDevPercentInstance)</td><td><a href='", self_url(), "&suburb=", URI::Escape::uri_escape($suburbName),"'>$noOfSaleListings listings</a></td></tr>\n";
+         print "<tr><td></td><td>Rent</td><td>$minRentInstance</td><td>$meanRentInstance</td><td>$medianRentalInstance</td><td>$maxRentInstance</td><td>$rentalStdDevInstance/(%$rentalStdDevPercentInstance)</td><td>($noOfRentListings)</td></tr>\n";
+         print "<tr><td></td><td>Yield</td><td></td><td></td><td>%$meanYieldInstance</td></tr>\n";
       }
    }
       
@@ -434,6 +439,47 @@ sub callback_analysisDataTable
       
    return undef;   
 }
+
+# -------------------------------------------------------------------------------------------------
+# callback_propertyList
+# returns a table containing a list of all the property data
+sub callback_propertyList
+{            
+   my $index = 0;   
+   my %propertyData;
+   
+   if ($suburbConstraintSet)
+   {
+      print "<table><tr><th>Address</th><th>Lower</th><th>Upper</th><th>Estimated Rent</th><th>Estimated Yield</th></tr>\n";            
+   
+      my $salesList = $analysisTools->getSalesDataList();         
+   
+      # generate the table to display
+      foreach (@$salesList)
+      {      
+         # $_ is a reference to a hash
+         
+         #$suburbName = URI::Escape::uri_escape($_);      
+         $suburbName = $$_{'SuburbName'};
+         $suburbName =~ tr/[A-Z]/[a-z]/;                    
+         
+         $addressInstance = $$_{'StreetNumber'}." ".$$_{'Street'}." ".$$_{'SuburbName'};
+         $lowerPriceInstance = commify(sprintf("\$%.0f", $$_{'AdvertisedPriceLower'}));
+         $upperPriceInstance = commify(sprintf("\$%.0f", $$_{'AdvertisedPriceUpper'}));         
+         ($estimatedRent, $estimatedYield) = estimateRent($analysisTools, $_);
+         $estimatedRentInstance = commify(sprintf("\$%.0f", $estimatedRent));
+         $estimatedYieldInstance = sprintf("%.1f", $estimatedYield);
+         
+         #<th>2br</th><th>3x1</th><th>3x2</th><th>4x2</th><th>4x3</th><th>5br</th></tr>\n";
+         print "<tr><td>$addressInstance</td><td>$lowerPriceInstance</td><td>$upperPriceInstance</td><td>$estimatedRentInstance</td><td>%$estimatedYieldInstance</td></tr>\n";            
+      }
+      
+      print "</table>\n";
+   }
+      
+   return undef;   
+}
+
   
 # -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
@@ -446,12 +492,23 @@ $advertisedRentalProfiles = AdvertisedRentalProfiles::new($sqlClient);
 $suburbProfiles = SuburbProfiles::new($sqlClient);
 
 if ($sqlClient->connect())
-{	      
+{	
+   # create the analysis tools instance...
+   $analysisTools = AnalysisTools::new($sqlClient);
+      
+   getBedrooms($analysisTools);
+   getBathrooms($analysisTools);
+   getType($analysisTools);
+   getSuburbName($analysisTools);
+   # and load the data for analysis from the database
+   $analysisTools->fetchAnalysisData();
+      
    $registeredCallbacks{"AnalysisDataTable"} = \&callback_analysisDataTable;
    $registeredCallbacks{"Bedrooms"} = \&callback_bedrooms;
    $registeredCallbacks{"Bathrooms"} = \&callback_bathrooms;
    $registeredCallbacks{"Type"} = \&callback_type;       
-      
+   $registeredCallbacks{"PropertyList"} = \&callback_propertyList;
+   
    $html = HTMLTemplate::printTemplate("AnalysisControlPanelTemplate.html", \%registeredCallbacks);
 
    #print $html;  
