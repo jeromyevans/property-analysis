@@ -33,6 +33,8 @@
 #   improve the speed of queries during DataGathering (checkIfTupleExists).
 #  7 December 2004 - added maintenance task supporting construction of the MasterPropertyComponentsXRef table from the
 #   componentOf relationships in the workingView
+#  19 January 2005 - added support for the StatusTable
+#
 # To do:
 #
 #  RUN PARSERS IN A SEPARATE PROCESS | OR RUN DECODER (eg. htmlsyntaxtree) in separate process - need way to pass data in and out of the
@@ -69,6 +71,7 @@ use WebsiteParser_RealEstateRentals;
 use DomainRegions;
 use Validator_RegExSubstitutes;
 use MasterPropertyTable;
+use StatusTable;
 
 # -------------------------------------------------------------------------------------------------    
 my %parameters = undef;

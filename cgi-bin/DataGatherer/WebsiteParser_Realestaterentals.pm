@@ -9,7 +9,7 @@
 # The parsers can't access any other global variables, but can use functions in the WebsiteParser_Common module
 #
 # History:
-#
+# 22 January 2005  - added support for the StatusTable reporting of progress for the thread
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -28,6 +28,7 @@ use AdvertisedPropertyProfiles;
 use AgentStatusServer;
 use PropertyTypes;
 use WebsiteParser_Common;
+use StatusTable;
 
 @ISA = qw(Exporter);
 
@@ -444,6 +445,8 @@ sub parseRealEstateRentalsSearchDetails
    my $checksum;   
    my $sourceName = $documentReader->getGlobalParameter('source');
    my $printLogger = $documentReader->getGlobalParameter('printLogger');
+   $statusTable = $documentReader->getStatusTable();
+
    $printLogger->print("in parseSearchDetails ($parentLabel)\n");
    
    if ($htmlSyntaxTree->containsTextPattern("Property No"))
@@ -472,13 +475,16 @@ sub parseRealEstateRentalsSearchDetails
             # record that it was encountered again
             $printLogger->print("   parseSearchDetails: identical record already encountered at $sourceID.\n");
             $advertisedRentalProfiles->addEncounterRecord($sourceName, $rentalProfiles{'SourceID'}, $checksum);
+            $statusTable->addToRecordsParsed($threadID, 1, 0, $url);    
+
          }
          else
          {
             $printLogger->print("   parseSearchDetails: unique checksum/url - adding new record.\n");
             # this tuple has never been extracted before - add it to the database
             $identifier = $advertisedRentalProfiles->addRecord($sourceName, \%rentalProfiles, $url, $checksum, $instanceID, $transactionNo);
-            
+            $statusTable->addToRecordsParsed($threadID, 1, 1, $url);    
+
             if ($identifier >= 0)
             {
                # 27Nov04: save the HTML file entry that created this record
@@ -547,7 +553,9 @@ sub parseRealEstateRentalsSearchResults
    my $length = 0;
    my @urlList;        
    my $firstRun = 1;
-   
+   my $statusTable = $documentReader->getStatusTable();
+   my $recordsEncountered = 0;
+
    # --- now extract the property information for this page ---
    $printLogger->print("inParseSearchResults ($parentLabel):\n");
    @splitLabel = split /\./, $parentLabel;
@@ -673,8 +681,10 @@ sub parseRealEstateRentalsSearchResults
          }
          
          #print "  END: state=$state: '$thisText' parsed=$parsedThisLine\n";
-      }
-      
+         $recordsEncountered++;  # count records seen
+
+      }      
+      $statusTable->addToRecordsEncountered($threadID, $recordsEncountered, $url);
       
       # now get the anchor for the NEXT button if it's defined 
       

@@ -20,6 +20,8 @@
 #  5 Jan 2004 - altered MasterPropertyTable to include a field dateLastAdvertised which is the most recent of the
 #   date entered or last encountered field for the components.  It's needed to to look for properties that 
 #   have been recently advertised, otherwise all the components would need to be checked.
+#  19 Jan 2005 - added index on address suburb|street|streetnumber (actually added before this date but included a typo
+#   so would have failed on next create command) Now fixed.
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -112,7 +114,7 @@ my $SQL_CREATE_TABLE_BODY =
     "AdvertisedPriceUpper DECIMAL(10,2), ".
     "AdvertisedWeeklyRentSource INTEGER UNSIGNED ZEROFILL, ".
     "AdvertisedWeeklyRent DECIMAL(10,2),".
-    "INDEX (StreetNumber(5),StreetName(10), SuburbIndex)";        
+    "INDEX (StreetNumber(5),Street(10), SuburbIndex)";        
     
 my $SQL_CREATE_TABLE_SUFFIX = ")";
            

@@ -28,6 +28,7 @@
 # 27 Nov 2004 - saves the HTML content that's used in the OriginatingHTML database and updates a CreatedBy foreign key 
 #   pointing back to that OriginatingHTML record
 # 5 December 2004 - adapted to use common AdvertisedPropertyProfiles instead of separate rentals and sales tables
+# 22 January 2005  - added support for the StatusTable reporting of progress for the thread
 
 use PrintLogger;
 use CGI qw(:standard);
@@ -44,6 +45,7 @@ use PropertyTypes;
 use WebsiteParser_Common;
 use DomainRegions;
 use OriginatingHTML;
+use StatusTable;
 
 @ISA = qw(Exporter);
 
@@ -415,6 +417,8 @@ sub parseDomainSalesPropertyDetails
    
    my %saleProfiles;
    my $checksum;   
+   $statusTable = $documentReader->getStatusTable();
+
    $printLogger->print("in parsePropertyDetails ()\n");
    
    
@@ -439,6 +443,7 @@ sub parseDomainSalesPropertyDetails
             # record that it was encountered again
             $printLogger->print("   parsePropertyDetails: identical record already encountered at $sourceName.\n");
             $advertisedSaleProfiles->addEncounterRecord($sourceName, $saleProfiles{'SourceID'}, $checksum);
+            $statusTable->addToRecordsParsed($threadID, 1, 0, $url);    
          }
          else
          {
@@ -446,7 +451,7 @@ sub parseDomainSalesPropertyDetails
             # this tuple has never been extracted before - add it to the database
             # 27Nov04 - addRecord returns the identifer (primaryKey) of the record created
             $identifier = $advertisedSaleProfiles->addRecord($sourceName, \%saleProfiles, $url, $checksum, $instanceID, $transactionNo);
-            
+            $statusTable->addToRecordsParsed($threadID, 1, 1, $url);    
             if ($identifier >= 0)
             {
                # 27Nov04: save the HTML file entry that created this record
@@ -1149,6 +1154,8 @@ sub parseDomainSalesSearchResults
    my $sourceName = $documentReader->getGlobalParameter('source');
    my $state = $documentReader->getGlobalParameter('state');
    my $suburbName;
+   my $statusTable = $documentReader->getStatusTable();
+   my $recordsEncountered = 0;
    
    # --- now extract the property information for this page ---
    $printLogger->print("inParseSearchResults ($parentLabel):\n");
@@ -1215,8 +1222,10 @@ sub parseDomainSalesSearchResults
                $printLogger->print("   parseSearchResults: id ", $sourceID , " in database. Updating last encountered field...\n");
                $advertisedSaleProfiles->addEncounterRecord($sourceName, $sourceID, undef);
             }
+            $recordsEncountered++;  # count records seen
          }
-         
+         $statusTable->addToRecordsEncountered($threadID, $recordsEncountered, $url);
+
          # save that this suburb has been processed (for tracking progress)
          saveLastSuburb($threadID, $suburbName);
       }

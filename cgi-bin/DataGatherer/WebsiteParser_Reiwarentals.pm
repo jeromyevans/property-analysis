@@ -10,6 +10,7 @@
 #
 # History:
 #  5 December 2004 - adapted to use common AdvertisedPropertyProfiles instead of separate rentals and sales tables
+# 22 January 2005  - added support for the StatusTable reporting of progress for the thread
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -28,6 +29,7 @@ use AdvertisedPropertyProfiles;
 use AgentStatusServer;
 use PropertyTypes;
 use WebsiteParser_Common;
+use StatusTable;
 
 @ISA = qw(Exporter);
 
@@ -226,7 +228,7 @@ sub parseREIWARentalsSearchDetails
    my $transactionNo = shift;
    my $threadID = shift;
    my $parentLabel = shift;
-
+   my $statusTable = $documentReader->getStatusTable();
    
    my $sqlClient = $documentReader->getSQLClient();
    my $tablesRef = $documentReader->getTableObjects();
@@ -263,12 +265,14 @@ sub parseREIWARentalsSearchDetails
          # record in the log that it was encountered again
          $printLogger->print("   parseSearchDetails: record already encountered at $SOURCE_NAME.\n");
 	      $advertisedRentalProfiles->addEncounterRecord($sourceName, $rentalProfiles{'SourceID'}, $checksum);
+         $statusTable->addToRecordsParsed($threadID, 1, 0, $url);    
       }
       else
       {
          $printLogger->print("   parseSearchDetails: unique checksum/url - adding new record.\n");
          # this tuple has never been extracted before - add it to the database
          $identifier = $advertisedRentalProfiles->addRecord($sourceName, \%rentalProfiles, $url, $checksum, $instanceID, $transactionNo);
+         $statusTable->addToRecordsParsed($threadID, 1, 1, $url);    
 
          if ($identifier >= 0)
          {
@@ -664,7 +668,9 @@ sub parseREIWARentalsSearchList
 
    my @urlList;
    my $firstRun = 1;        
-   
+   my $statusTable = $documentReader->getStatusTable();
+   my $recordsEncountered = 0;
+
    # --- now extract the property information for this page ---
    $printLogger->print("inParseSearchList ($parentLabel):\n");
 
@@ -713,7 +719,10 @@ sub parseREIWARentalsSearchList
                   $printLogger->print("      parseSearchList: id ", $sourceID , " in database.  Updating last encountered field...\n");
                   $advertisedRentalProfiles->addEncounterRecord($sourceName, $sourceID, undef);
                }
-            }
+            
+               $recordsEncountered++;  # count records seen
+            }      
+            $statusTable->addToRecordsEncountered($threadID, $recordsEncountered, $url);
          }
          else
          {

@@ -9,6 +9,7 @@
 # The parsers can't access any other global variables, but can use functions in the WebsiteParser_Common module
 # History:
 #  5 December 2004 - adapted to use common AdvertisedPropertyProfiles instead of separate rentals and sales tables
+# 22 January 2005  - added support for the StatusTable reporting of progress for the thread
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -27,6 +28,7 @@ use AdvertisedPropertyProfiles;
 use AgentStatusServer;
 use PropertyTypes;
 use WebsiteParser_Common;
+use StatusTable;
 
 @ISA = qw(Exporter);
 
@@ -238,7 +240,8 @@ sub parseREIWASalesSearchDetails
    
    my $sqlClient = $documentReader->getSQLClient();
    my $tablesRef = $documentReader->getTableObjects();
-   
+   my $statusTable = $documentReader->getStatusTable();
+
    my $advertisedSaleProfiles = $$tablesRef{'advertisedSaleProfiles'};
    my $originatingHTML = $$tablesRef{'originatingHTML'};  # 22Dec04
 
@@ -274,13 +277,15 @@ sub parseREIWASalesSearchDetails
             # record that it was encountered again
             $printLogger->print("   parseSearchDetails: identical record already encountered at $sourceID.\n");
             $advertisedSaleProfiles->addEncounterRecord($sourceName, $saleProfiles{'SourceID'}, $checksum);
+            $statusTable->addToRecordsParsed($threadID, 1, 0, $url);    
          }
          else
          {
             $printLogger->print("   parseSearchDetails: unique checksum/url - adding new record.\n");
             # this tuple has never been extracted before - add it to the database
             $identifier = $advertisedSaleProfiles->addRecord($sourceName, \%saleProfiles, $url, $checksum, $instanceID, $transactionNo);
-            
+            $statusTable->addToRecordsParsed($threadID, 1, 1, $url);    
+
             if ($identifier >= 0)
             {
                # 27Nov04: save the HTML file entry that created this record
@@ -681,7 +686,9 @@ sub parseREIWASalesSearchList
    
    my @urlList;        
    my $firstRun = 1;
-   
+   my $statusTable = $documentReader->getStatusTable();
+   my $recordsEncountered = 0;
+
    # --- now extract the property information for this page ---
    $printLogger->print("inParseSearchList ($parentLabel):\n");
    #$htmlSyntaxTree->printText();
@@ -732,7 +739,9 @@ sub parseREIWASalesSearchList
                   $printLogger->print("   parseSearchList: id ", $sourceID , " in database. Updating last encountered field...\n");
                   $advertisedSaleProfiles->addEncounterRecord($sourceName, $sourceID, undef);
                }
-            }
+               $recordsEncountered++;  # count records seen
+            }      
+            $statusTable->addToRecordsEncountered($threadID, $recordsEncountered, $url);
          }
          else
          {

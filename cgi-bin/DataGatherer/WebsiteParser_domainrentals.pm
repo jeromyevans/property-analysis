@@ -6,6 +6,9 @@
 #   $documentReader
 #   $htmlSyntaxTree
 #
+# History:
+#  22 January 2005  - added support for the StatusTable reporting of progress for the thread
+#
 # The parsers can't access any other global variables, but can use functions in the WebsiteParser_Common module
 # ---CVS---
 # Version: $Revision$
@@ -27,6 +30,7 @@ use PropertyTypes;
 use WebsiteParser_Common;
 use DomainRegions;
 use OriginatingHTML;
+use StatusTable;
 
 @ISA = qw(Exporter);
 
@@ -394,6 +398,8 @@ sub parseDomainRentalPropertyDetails
    my $checksum;   
    $printLogger->print("in parsePropertyDetails ($parentLabel)\n");
    
+   # get the status table
+   $statusTable = $documentReader->getStatusTable();
    
    if ($htmlSyntaxTree->containsTextPattern("Property Details"))
    {
@@ -408,7 +414,7 @@ sub parseDomainRentalPropertyDetails
       $printLogger->print("   parsePropertyDetails: extracted checksum = ", $checksum, ". Checking log...\n");
              
       if ($sqlClient->connect())
-      {		 	 
+      {	
          # check if the log already contains this checksum - if it does, assume the tuple already exists                  
          if ($advertisedRentalProfiles->checkIfTupleExists($sourceName, $rentalProfiles{'SourceID'}, $checksum, $rentalProfiles{'AdvertisedWeeklyRent'}))
          {
@@ -416,6 +422,7 @@ sub parseDomainRentalPropertyDetails
             # record that it was encountered again
             $printLogger->print("   parsePropertyDetails: identical record already encountered at $sourceName.\n");
             $advertisedRentalProfiles->addEncounterRecord($sourceName, $rentalProfiles{'SourceID'}, $checksum);
+            $statusTable->addToRecordsParsed($threadID, 1, 0, $url);    
          }
          else
          {
@@ -423,7 +430,7 @@ sub parseDomainRentalPropertyDetails
             # this tuple has never been extracted before - add it to the database
             # 27Nov04 - addRecord returns the identifer (primaryKey) of the record created
             $identifier = $advertisedRentalProfiles->addRecord($sourceName, \%rentalProfiles, $url, $checksum, $instanceID, $transactionNo);
-            
+            $statusTable->addToRecordsParsed($threadID, 1, 1, $url);
             if ($identifier >= 0)
             {
                # 27Nov04: save the HTML file entry that created this record
@@ -494,6 +501,9 @@ sub parseDomainRentalChooseSuburbs
       
    $printLogger->print("in parseChooseSuburbs ($parentLabel)\n");
 
+   my $tablesHashRef = $this->{'tablesHashRef'};      
+   my $threadID = $this->{'threadID'};
+   
  #  parseDomainSalesDisplayResponse($documentReader, $htmlSyntaxTree, $url, $instanceID, $transactionNo);
  
    if ($htmlSyntaxTree->containsTextPattern("Advanced Search"))
@@ -1028,6 +1038,9 @@ sub parseDomainRentalSearchResults
    my $sourceName = $documentReader->getGlobalParameter('source');
    my $state = $documentReader->getGlobalParameter('state');
    my $suburbName;
+   my $recordsEncountered = 0;
+   
+   $statusTable = $documentReader->getStatusTable();
    
    # --- now extract the property information for this page ---
    $printLogger->print("inParseSearchResults ($parentLabel):\n");
@@ -1079,7 +1092,7 @@ sub parseDomainRentalSearchResults
             ($crud, $sourceID) = split(/\?/, $sourceURL, 2);
             $sourceID =~ s/[^0-9]//gi;
             $sourceURL = new URI::URL($sourceURL, $url)->abs()->as_string();      # convert to absolute
-           
+         
             # check if the cache already contains this unique id            
             if (!$advertisedRentalProfiles->checkIfTupleExists($sourceName, $sourceID, undef, $priceLower, undef))                              
             {   
@@ -1094,8 +1107,12 @@ sub parseDomainRentalSearchResults
                $printLogger->print("   parseSearchResults: id ", $sourceID , " in database. Updating last encountered field...\n");
                $advertisedRentalProfiles->addEncounterRecord($sourceName, $sourceID, undef);
             }
+            
+            $recordsEncountered++;  # count records seen
          }
          
+         $statusTable->addToRecordsEncountered($threadID, $recordsEncountered, $url);
+
          # save that this suburb has been processed (for tracking progress)
          saveLastRentalSuburb($threadID, $suburbName);
       }
