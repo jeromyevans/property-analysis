@@ -1,6 +1,6 @@
 #!/usr/bin/perl
-# 11 Nov 04 - derived from multiple sources
-#  Contains parsers for the RealEstate website to obtain advertised sales information
+# 22 Dec 04 
+#  Contains parsers for the RealEstate website to obtain advertised rental information
 #
 #  all parses must accept two parameters:
 #   $documentReader
@@ -9,7 +9,6 @@
 # The parsers can't access any other global variables, but can use functions in the WebsiteParser_Common module
 #
 # History:
-#  5 December 2004 - adapted to use common AdvertisedPropertyProfiles instead of separate rentals and sales tables
 #
 # ---CVS---
 # Version: $Revision$
@@ -80,7 +79,7 @@ sub parseRealEstateDisplayResponse
 # -------------------------------------------------------------------------------------------------
 
 # -------------------------------------------------------------------------------------------------
-# extractSaleProfile
+# extractRentalProfile
 # extracts property sale information from an HTML Syntax Tree
 # assumes the HTML Syntax Tree is in a very specific format
 #
@@ -101,7 +100,7 @@ sub parseRealEstateDisplayResponse
 # Returns:
 #   hash containing the suburb profile.
 #      
-sub extractRealEstateSaleProfile
+sub extractRealEstateRentalProfile
 {
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
@@ -117,7 +116,7 @@ sub extractRealEstateSaleProfile
    my $SEEKING_DESCRIPTION   = 7;
    my $APPENDING_DESCRIPTION = 8;
 
-   my %saleProfile;   
+   my %rentalProfile;   
  #  print "   inExtractSaleProfile:\n";
    # --- set start contraint to Print to get the first line of text (id, suburb, price)
  
@@ -333,82 +332,78 @@ sub extractRealEstateSaleProfile
    
    # ------ now parse the extracted values ----
          
-   $saleProfile{'SourceID'} = $sourceID;      
+   $rentalProfile{'SourceID'} = $sourceID;      
    
    if ($suburb) 
    {
-      $saleProfile{'SuburbName'} = $suburb;
-   }
-   
-   if ($priceUpper) 
-   {
-      $saleProfile{'AdvertisedPriceUpper'} = $documentReader->parseNumber($priceUpper);
+      $rentalProfile{'SuburbName'} = $suburb;
    }
    
    if ($priceLower) 
    {
-      $saleProfile{'AdvertisedPriceLower'} = $documentReader->parseNumber($priceLower);
+      $rentalProfile{'AdvertisedWeeklyRent'} = $documentReader->parseNumber($priceLower);
    }
       
    if ($type)
    {
-      $saleProfile{'Type'} = $type;
+      $rentalProfile{'Type'} = $type;
    }
    if ($bedrooms)
    {
-      $saleProfile{'Bedrooms'} = $documentReader->parseNumber($bedrooms);
+      $rentalProfile{'Bedrooms'} = $documentReader->parseNumber($bedrooms);
    }
    if ($bathrooms)
    {
-      $saleProfile{'Bathrooms'} = $documentReader->parseNumber($bathrooms);
+      $rentalProfile{'Bathrooms'} = $documentReader->parseNumber($bathrooms);
    }
    if ($land)
    {
-      $saleProfile{'Land'} = $documentReader->parseNumber($land);
+      $rentalProfile{'Land'} = $documentReader->parseNumber($land);
    }
    if ($yearBuilt)
    {
-      $saleProfile{'YearBuilt'} = $documentReader->parseNumber($yearBuilt);
+      $rentalProfile{'YearBuilt'} = $documentReader->parseNumber($yearBuilt);
    }    
    
    if ($streetNumber)
    {
-      $saleProfile{'StreetNumber'} = $streetNumber;
+      $rentalProfile{'StreetNumber'} = $streetNumber;
    }
    if ($street)
    {
-      $saleProfile{'Street'} = $street;
+      $rentalProfile{'Street'} = $street;
    }
    
    if ($city)
    {
-      $saleProfile{'City'} = $city;
+      $rentalProfile{'City'} = $city;
    }
    
    if ($zone)
    {
-      $saleProfile{'Council'} = $zone;
+      $rentalProfile{'Council'} = $zone;
    }
    
    if ($description)
    {
-      $saleProfile{'Description'} = $description;
+      $rentalProfile{'Description'} = $description;
    }
    
    if ($features)
    {
-      $saleProfile{'Features'} = $features;
+      $rentalProfile{'Features'} = $features;
    }
 
-   $saleProfile{'State'} = $documentReader->getGlobalParameter('state');
+   $rentalProfile{'State'} = $documentReader->getGlobalParameter('state');
+   $rentalProfile{'City'} = $documentReader->getGlobalParameter('city');
      
-  # DebugTools::printHash("SaleProfile", \%saleProfile);
+  # DebugTools::printHash("SaleProfile", \%rentalProfile);
         
-   return %saleProfile;  
+   return %rentalProfile;  
 }
 
 # -------------------------------------------------------------------------------------------------
-# parseRealEstateSearchDetails
+# parseRealEstateRentalsSearchDetails
 # parses the htmlsyntaxtree to extract advertised sale information and insert it into the database
 #
 # Purpose:
@@ -428,7 +423,7 @@ sub extractRealEstateSaleProfile
 # Returns:
 #  a list of HTTP transactions or URL's.
 #    
-sub parseRealEstateSearchDetails
+sub parseRealEstateRentalsSearchDetails
 
 {	
    my $documentReader = shift;
@@ -442,10 +437,10 @@ sub parseRealEstateSearchDetails
    my $sqlClient = $documentReader->getSQLClient();
    my $tablesRef = $documentReader->getTableObjects();
    
-   my $advertisedSaleProfiles = $$tablesRef{'advertisedSaleProfiles'};
-   my $originatingHTML = $$tablesRef{'originatingHTML'};  # 27Nov04
+   my $advertisedRentalProfiles = $$tablesRef{'advertisedRentalProfiles'};
+   my $originatingHTML = $$tablesRef{'originatingHTML'};  # 22Dec04
 
-   my %saleProfiles;
+   my %rentalProfiles;
    my $checksum;   
    my $sourceName = $documentReader->getGlobalParameter('source');
    my $printLogger = $documentReader->getGlobalParameter('printLogger');
@@ -457,38 +452,39 @@ sub parseRealEstateSearchDetails
       #if ($htmlSyntaxTree->containsTextPattern("Suburb Profile"))
       #{
       # parse the HTML Syntax tree to obtain the advertised sale information
-      %saleProfiles = extractRealEstateSaleProfile($documentReader, $htmlSyntaxTree, $url, $parentLabel);
+      %rentalProfiles = extractRealEstateRentalProfile($documentReader, $htmlSyntaxTree, $url, $parentLabel);
 
-      tidyRecord($sqlClient, \%saleProfiles);        # 27Nov04 - used to be called validateProfile
-#       DebugTools::printHash("sale", \%saleProfiles);
+      tidyRecord($sqlClient, \%rentalProfiles);        # 27Nov04 - used to be called validateProfile
+#       DebugTools::printHash("sale", \%rentalProfiles);
               
       # calculate a checksum for the information - the checksum is used to approximately 
       # identify the uniqueness of the data
-      $checksum = $documentReader->calculateChecksum(\%saleProfiles);
+      $checksum = $documentReader->calculateChecksum(\%rentalProfiles);
             
       $printLogger->print("   parseSearchDetails: extracted checksum = ", $checksum, ". Checking log...\n");
              
       if ($sqlClient->connect())
       {		 	 
          # check if the log already contains this checksum - if it does, assume the tuple already exists                  
-         if ($advertisedSaleProfiles->checkIfTupleExists($sourceName, $saleProfiles{'SourceID'}, $checksum, $saleProfiles{'AdvertisedPriceLower'}))
+         if ($advertisedRentalProfiles->checkIfTupleExists($sourceName, $rentalProfiles{'SourceID'}, $checksum, $rentalProfiles{'AdvertisedWeeklyRent'}))
          {
             # this tuple has been previously extracted - it can be dropped
             # record that it was encountered again
             $printLogger->print("   parseSearchDetails: identical record already encountered at $sourceID.\n");
-            $advertisedSaleProfiles->addEncounterRecord($sourceName, $saleProfiles{'SourceID'}, $checksum);
+            $advertisedRentalProfiles->addEncounterRecord($sourceName, $rentalProfiles{'SourceID'}, $checksum);
          }
          else
          {
             $printLogger->print("   parseSearchDetails: unique checksum/url - adding new record.\n");
             # this tuple has never been extracted before - add it to the database
-            $identifier = $advertisedSaleProfiles->addRecord($sourceName, \%saleProfiles, $url, $checksum, $instanceID, $transactionNo);
+            $identifier = $advertisedRentalProfiles->addRecord($sourceName, \%rentalProfiles, $url, $checksum, $instanceID, $transactionNo);
             
             if ($identifier >= 0)
             {
                # 27Nov04: save the HTML file entry that created this record
-               $htmlIdentifier = $originatingHTML->addRecord($identifier, $url, $htmlSyntaxTree, "advertisedSaleProfiles");
+               $htmlIdentifier = $originatingHTML->addRecord($identifier, $url, $htmlSyntaxTree, "advertisedRentalProfiles");
             }
+
          }
       }
       else
@@ -508,7 +504,7 @@ sub parseRealEstateSearchDetails
 
 
 # -------------------------------------------------------------------------------------------------
-# parseRealEstateSearchResults
+# parseRealEstateRentalsSearchResults
 # parses the htmlsyntaxtree that contains the list of homes generated in response 
 # to a query
 #
@@ -529,7 +525,7 @@ sub parseRealEstateSearchDetails
 # Returns:
 #  a list of HTTP transactions or URL's.
 #    
-sub parseRealEstateSearchResults
+sub parseRealEstateRentalsSearchResults
 
 {	
    my $documentReader = shift;
@@ -581,7 +577,7 @@ sub parseRealEstateSearchResults
          
          if ((!$parsedThisLine) && ($state == $SEEKING_FIRST_RESULT))
          {
-            # if this text is the suburb name, where in a new record
+            # if this text is the suburb name, we're in a new record
             if ($thisText =~ /$suburbName/i)
             {
                $state = $PARSING_RESULT_TITLE;
@@ -645,7 +641,7 @@ sub parseRealEstateSearchResults
             {
                # check if the cache already contains this unique id
                # $_ is a reference to a hash
-               if (!$advertisedSaleProfiles->checkIfTupleExists($sourceName, $sourceID, undef, $priceLower, undef))                              
+               if (!$advertisedRentalProfiles->checkIfTupleExists($sourceName, $sourceID, undef, $priceLower, undef))                              
                {   
                   $printLogger->print("   parseSearchResults: adding anchor id ", $sourceID, "...\n");
                   #$printLogger->print("   parseSearchList: url=", $sourceURL, "\n");          
@@ -656,7 +652,7 @@ sub parseRealEstateSearchResults
                else
                {
                   $printLogger->print("   parseSearchResults: id ", $sourceID , " in database. Updating last encountered field...\n");
-                  $advertisedSaleProfiles->addEncounterRecord($sourceName, $sourceID, undef);
+                  $advertisedRentalProfiles->addEncounterRecord($sourceName, $sourceID, undef);
                }
             }
             
@@ -724,7 +720,7 @@ sub parseRealEstateSearchResults
 
 
 # -------------------------------------------------------------------------------------------------
-# parseRealEstateSearchForm
+# parseRealEstateRentalsSearchForm
 # parses the htmlsyntaxtree to post form information
 #
 # Purpose:
@@ -744,7 +740,7 @@ sub parseRealEstateSearchResults
 # Returns:
 #  a list of HTTP transactions or URL's.
 #    
-sub parseRealEstateSearchForm
+sub parseRealEstateRentalsSearchForm
 
 {	
    my $documentReader = shift;
@@ -863,7 +859,7 @@ sub parseRealEstateSearchForm
 
 
 # -------------------------------------------------------------------------------------------------
-# parseRealEstateChooseState
+# parseRealEstateRentalsChooseState
 # parses the htmlsyntaxtree to extract the link to each of the specified state
 #
 # Purpose:
@@ -883,7 +879,7 @@ sub parseRealEstateSearchForm
 # Returns:
 #  a list of HTTP transactions or URL's.
 #    
-sub parseRealEstateChooseState
+sub parseRealEstateRentalsChooseState
 
 {	
    my $documentReader = shift;
@@ -936,7 +932,7 @@ sub parseRealEstateChooseState
 
 
 # -------------------------------------------------------------------------------------------------
-# parseRealEstateSalesHomePage
+# parseRealEstateRentalsHomePage
 # parses the htmlsyntaxtree to extract the link to the Advertised Sale page
 #
 # Purpose:
@@ -956,7 +952,7 @@ sub parseRealEstateChooseState
 # Returns:
 #  a list of HTTP transactions or URL's.
 #    
-sub parseRealEstateSalesHomePage
+sub parseRealEstateRentalsHomePage
 
 {	
    my $documentReader = shift;
@@ -974,14 +970,14 @@ sub parseRealEstateSalesHomePage
    $printLogger->print("inParseHomePage ($parentLabel):\n");
    if ($htmlSyntaxTree->containsTextPattern("Real Estate Institute of Western Australia"))
    {                                     
-      $anchor = $htmlSyntaxTree->getNextAnchorContainingPattern("Homes For Sale");
+      $anchor = $htmlSyntaxTree->getNextAnchorContainingPattern("Rental Profiles");
       if ($anchor)
       {
-         $printLogger->print("   following anchor 'Homes For Sale'...\n");
+         $printLogger->print("   following anchor 'Rental Profiles'...\n");
       }
       else
       {
-         $printLogger->print("   anchor 'Homes For Sale' not found!\n");
+         $printLogger->print("   anchor 'Rental Profiles' not found!\n");
       }
    }	  
    else 

@@ -240,7 +240,8 @@ sub parseREIWASalesSearchDetails
    my $tablesRef = $documentReader->getTableObjects();
    
    my $advertisedSaleProfiles = $$tablesRef{'advertisedSaleProfiles'};
-   
+   my $originatingHTML = $$tablesRef{'originatingHTML'};  # 22Dec04
+
    my %saleProfiles;
    my $checksum;   
    my $sourceName = $documentReader->getGlobalParameter('source');
@@ -278,7 +279,14 @@ sub parseREIWASalesSearchDetails
          {
             $printLogger->print("   parseSearchDetails: unique checksum/url - adding new record.\n");
             # this tuple has never been extracted before - add it to the database
-            $advertisedSaleProfiles->addRecord($sourceName, \%saleProfiles, $url, $checksum, $instanceID, $transactionNo);         
+            $identifier = $advertisedSaleProfiles->addRecord($sourceName, \%saleProfiles, $url, $checksum, $instanceID, $transactionNo);
+            
+            if ($identifier >= 0)
+            {
+               # 27Nov04: save the HTML file entry that created this record
+               $htmlIdentifier = $originatingHTML->addRecord($identifier, $url, $htmlSyntaxTree, "advertisedSaleProfiles");
+            }
+
          }
       }
       else

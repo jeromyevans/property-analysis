@@ -65,6 +65,7 @@ use WebsiteParser_REIWARentals;
 use WebsiteParser_REIWASuburbs;
 use WebsiteParser_RealEstateSales;
 use WebsiteParser_DomainRentals;
+use WebsiteParser_RealEstateRentals;
 use DomainRegions;
 use Validator_RegExSubstitutes;
 use MasterPropertyTable;
@@ -167,6 +168,16 @@ if (($parseSuccess) && (!($parameters{'command'} =~ /maintenance/i)))
                      $myParsers{"ChooseSuburbs"} = \&parseDomainRentalChooseSuburbs;   
                      $myParsers{"SearchResults"} = \&parseDomainRentalSearchResults;   
                      $myParsers{"PropertyDetails"} = \&parseDomainRentalPropertyDetails;
+                  }
+                  else
+                  {
+                     if ($parameters{'config'} =~ /RealEstateRentals/i)
+                     {
+                        $myParsers{"rsearch?a=sf&"} = \&parseRealEstateRentalsSearchForm;
+                        $myParsers{"rsearch?a=s&"} = \&parseRealEstateRentalsSearchResults;
+                        $myParsers{"rsearch?a=d&"} = \&parseRealEstateRentalsSearchResults;
+                        $myParsers{"rsearch?a=o&"} = \&parseRealEstateRentalsSearchDetails;
+                     }
                   }
                }
             }
