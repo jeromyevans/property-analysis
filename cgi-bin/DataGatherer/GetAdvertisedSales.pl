@@ -14,7 +14,7 @@
 #  30 July 2004 - changed parseSearchDetails to only parse the page if it contains 'Property Details' - was encountering 
 #   empty responses from the server that yielded an empty database entry.
 #  21 August 2004 - changed parseSearchForm to set the main area to all of the state instead of just perth metropolitan.
-
+#  21 August 2004 - added requirement to specify state as a parameter - used for postcode lookup
 #
 # To do:
 #  - front page for monitoring progress
@@ -35,6 +35,7 @@ use DebugTools;
 use DocumentReader;
 use AdvertisedSaleProfiles;
 use AgentStatusServer;
+use PropertyTypes;
 
 # -------------------------------------------------------------------------------------------------
 # loadConfiguration
@@ -94,10 +95,12 @@ my $statusPort = undef;
 my $startLetter;
 my $endLetter;
 my $agent;
+my $state;
+my $targetDatabase;
 
 my $useHTML = param('html');
 
-($parseSuccess, $createTables, $startSession, $continueSession, $dropTables) = parseParameters();
+($parseSuccess, $createTables, $startSession, $continueSession, $dropTables, $maintenance) = parseParameters();
 
 if (!$useHTML)
 {
@@ -133,7 +136,7 @@ if (!$parameters{'url'})
    $printLogger->print("   main: Configuration file not found\n");
 }
 
-if (($parseSuccess) && ($parameters{'url'}))
+if (($parseSuccess) && ($parameters{'url'}) && ($state) && (!$maintenance))
 {
    # if a status port has been specified, start the TCP server
    if ($statusPort)
@@ -144,11 +147,15 @@ if (($parseSuccess) && ($parameters{'url'}))
       $printLogger->print("   main: started agent status server (port=$statusPort)\n");
    }            
    
-   ($sqlClient, $advertisedSaleProfiles) = initialiseTableObjects();
+   ($sqlClient, $advertisedSaleProfiles, $propertyTypes) = initialiseTableObjects();
    # hash of table objects - the key's are only significant to the local callback functions
  
+   # enable logging to disk by the SQL client
+   $sqlClient->enableLogging($instanceID);
+   
    $myTableObjects{'advertisedSaleProfiles'} = $advertisedSaleProfiles;
-      
+   $myTableObjects{'propertyTypes'} = $propertyTypes;
+   
    $myParsers{"searchdetails"} = \&parseSearchDetails;
    $myParsers{"search.cfm"} = \&parseSearchForm;
    $myParsers{"content-home"} = \&parseHomePage;
@@ -159,13 +166,25 @@ if (($parseSuccess) && ($parameters{'url'}))
    my $myDocumentReader = DocumentReader::new($agent, $instanceID, $parameters{'url'}, $sqlClient, 
       \%myTableObjects, \%myParsers, $printLogger);
 
-#   $myDocumentReader->setProxy("http://localhost:8080");
+   #$myDocumentReader->setProxy("http://localhost:8080");
    $myDocumentReader->run($createTables, $startSession, $continueSession, $dropTables);
  
 }
 else
 {
-   $printLogger->print("   main: No action requested\n");
+   if ($maintenance)
+   {
+      doMaintenance($printLogger);
+   }
+   else
+   {
+       
+      if (!$state)
+      {
+         $printLogger->print("   main: state not specified\n");
+      }
+      $printLogger->print("   main: No action requested\n");
+   }
 }
 
 $printLogger->printFooter("Finished\n");
@@ -337,11 +356,342 @@ sub extractSaleProfile
       $saleProfile{'Features'} = $features;
    }
 
+   $saleProfile{'State'} = $state;
      
    #DebugTools::printHash("SaleProfile", \%saleProfile);
         
    return %saleProfile;  
 }
+
+# -------------------------------------------------------------------------------------------------
+$PRETTY_PRINT_WORDS = 1;
+$PRETTY_PRINT_SENTANCES = 0;
+# ------------------------------------------------------------------------------------------------
+
+# -------------------------------------------------------------------------------------------------
+# validateProfile
+# validates the fields in the property record (for correctness)
+#
+# Purpose:
+#  construction of the repositories
+#
+# Parameters:
+#  saleProfile hash
+
+# Updates:
+#  database
+#
+# Returns:
+#  validated sale profile
+#    
+sub validateProfile
+{
+   my $sqlClient = shift;
+   my $profileRef = shift; 
+   
+   # match the suburb name to a recognised suburb name
+   %matchedSuburb = matchSuburbName($sqlClient, $$profileRef{'SuburbName'}, $$profileRef{'State'});
+     
+   if (%matchedSuburb)
+   {
+      $$profileRef{'SuburbIndex'} = $matchedSuburb{'SuburbIndex'};
+      $$profileRef{'SuburbName'} = $matchedSuburb{'SuburbName'};
+   }
+   
+   # validate property type
+   $$profileRef{'TypeIndex'} = PropertyTypes::mapPropertyType($$profileRef{'Type'});
+   
+   # validate number of bedrooms
+   if (($$profileRef{'Bedrooms'} > 0) || (!defined $$profileRef{'Bedrooms'}))
+   {
+   }
+   else
+   {
+       delete $$profileRef{'Bedrooms'};
+   }
+
+   # validate number of bathrooms
+   if (($$profileRef{'Bathrooms'} > 0) || (!defined $$profileRef{'Bathrooms'}))
+   {
+   }
+   else
+   {
+       delete $$profileRef{'Bathrooms'};
+   }
+   
+   # validate land area
+   if (($$profileRef{'Land'} > 0) || (!defined $$profileRef{'Land'}))
+   {
+   }
+   else
+   {
+       delete $$profileRef{'Land'};
+   }
+      
+   # validate advertised price lower
+   if ((($$profileRef{'AdvertisedPriceLower'} > 0)) || (!defined $$profileRef{'AdvertisedPriceLower'}))
+   {
+   }
+   else
+   {
+       delete $$profileRef{'AdvertisedPriceLower'};
+   }
+   
+   # validate advertised price upper
+   if ((($$profileRef{'AdvertisedPriceUpper'} > 0)) || (!defined $$profileRef{'AdvertisedPriceUpper'}))
+   {
+   }
+   else
+   {
+       delete $$profileRef{'AdvertisedPriceUpper'};
+   }
+   
+   # ---
+   # attempt to remove phone numbers and personal details from the description
+   #  - a  phone number is 8 to 10 digits.  It may contain zero or more whitespaces between each digit, but nothing else
+   $description = $$profileRef{'Description'};
+   #if ($description =~ /0(\s*){8,10}/g)
+   if ($description =~ /(\d(\s*)){8,10}/g)
+   {
+      # there is a phone number in the message - delete the entire sentance containing the phone number
+      # split into sentances...
+      @sentanceList = split /[\.|\?|\!\*]/, $$profileRef{'Description'};
+      $index = 0;
+      # loop through each sentance looking for the pattern
+      foreach (@sentanceList)
+      {
+         # if this sentance contains a phone number...
+         if ($_ =~ /(\d(\s*)){8,10}/g)
+         {
+            # reject this sentance as it contains the pattern
+            #BUGFIX 13 September 2004 - need to escape the sentance before it's included in the
+            # regular expression as some characters can break the expression
+            # - escape regular expression characters
+            $sentanceList[$index] =~ s/(\(|\)|\?|\.|\*|\+|\^|\{|\}|\[|\]|\|)/\\$1/g;
+            
+            $description =~ s/($sentanceList[$index])([\.|\?|\!\*]*)//g;
+         }
+         $index++;
+      }         
+   }
+   $$profileRef{'Description'} = $description;
+   
+   # do another parse of the description to remove phone numbers if a sentance couldn't be identified - replace the number with a blank
+   $$profileRef{'Description'} =~ s/(\d(\s*)){8,10}//g;
+   
+   #---
+   # now, search the description for information not provided explicitly in the fields - look for landArea in sqm in the text
+   if (!defined $$profileRef{'Land'})
+   {
+      # determine if the description contains 'sqm' or a variation of that
+      #  look for 1 or more digits followed by 0 or more spaces then SQM
+      if ($$profileRef{'Description'} =~ /\d+(\s*)sqm/i)
+      {
+         $description = $$profileRef{'Description'};
+         # this expression extracts the sqm number out into $2 and assigns it to $landArea 
+         # the 'e' modified ensures the second expresion is executed
+         $description =~ s/((\d+)(\s*)sqm)/$landArea = sprintf("$2")/ei;         
+      } 
+      
+      if ((defined $landArea) && ($landArea > 0))
+      {
+         # assign the land area specified in the description
+         $$profileRef{'Land'} = $landArea;
+      }
+   }
+
+   #---
+   # now, search the description for information not provided explicitly in the fields - look for bedrooms in the text
+   if (!defined $$profileRef{'Bedrooms'})
+   {
+      
+      # determine if the description contains 'sqm' or a variation of that
+      #  look for 1 or more digits followed by any space and charcters until bedrooms.  Note that a non-digit or 
+      # non alpha character will break the pattern (for example, a comma implies the number may not be associated with bedrooms)
+      # this is pretty rough but should work most of the time
+      $description = $$_{'Description'};
+      if ($description =~ /(\d+)([\w|\s]*)bedroom/i)
+      {
+         # this expression extracts the bedrooms number out into $1 and assigns it to $bedrooms 
+         # the 'e' modified ensures the second expresion is executed
+         $description =~ s/(\d+)([\w|\s]*)bedroom/$bedrooms = sprintf("$1")/ei;         
+      } 
+      
+      if ((defined $bedrooms) && ($bedrooms > 0))
+      {
+         # assign the land area specified in the description
+         $$profileRef{'Bedrooms'} = $bedrooms;
+      }
+   }
+   
+    #---
+   # now, search the description for information not provided explicitly in the fields - look for bathrooms in the text
+   if (!defined $$profileRef{'Bathrooms'})
+   {      
+      #  look for 1 or more digits followed by any space and charcters until bath.  Note that a non-digit or 
+      # non alpha character will break the pattern (for example, a comma implies the number may not be associated with bath)
+      # this is pretty rough but should work most of the time
+      $description = $$_{'Description'};
+      if ($description =~ /(\d+)([\w|\s]*)bath/i)
+      {
+         # this expression extracts the bedrooms number out into $1 and assigns it to $bedrooms 
+         # the 'e' modified ensures the second expresion is executed
+         $description =~ s/(\d+)([\w|\s]*)bath/$bathrooms = sprintf("$1")/ei;         
+      } 
+      
+      if ((defined $bathrooms) && ($bathrooms > 0))
+      {
+         # assign the land area specified in the description
+         $$profileRef{'Bathrooms'} = $bathrooms;
+      }
+   }
+   
+   # format the text using standard conventions to easy comparison later
+   $$profileRef{'SuburbName'} = prettyPrint($$profileRef{'SuburbName'}, 1);
+
+   $$profileRef{'StreetNumber'} = prettyPrint($$profileRef{'StreetNumber'}, 1);
+
+   $$profileRef{'Street'} = prettyPrint($$profileRef{'StreetName'}, 1);
+
+   $$profileRef{'City'} = prettyPrint($$profileRef{'City'}, 1);
+
+   $$profileRef{'Council'} = prettyPrint($$profileRef{'Council'}, 1);
+   
+   $$profileRef{'Description'} = prettyPrint($$profileRef{'Description'}, 0);
+
+   $$profileRef{'Features'} = prettyPrint($$profileRef{'Features'}, 0);
+}
+
+
+# -------------------------------------------------------------------------------------------------
+# change all characters to lowercase except the first character following a full stop, or the first character in the string
+# if the allFirstUpper flag is set, then the first letter of all words is changed to uppercase, otherwise only the
+# first letter of a sentance is changed to uppercase.
+sub prettyPrint
+
+{
+   my $inputText = shift;
+   my $allFirstUpper = shift;
+   my $SEEKING_DOT = 0;
+   my $SEEKING_NEXT_ALPHA = 1;
+   my $SEEKING_FIRST_ALPHA = 2;
+   my $state;
+      
+   # --- remove leading and trailing whitespace ---
+   # substitute trailing whitespace characters with blank
+   # s/whitespace from end-of-line/all occurances
+   # s/\s*$//g;      
+   $inputText =~ s/\s*$//g;
+
+   # substitute leading whitespace characters and leading non-word characters with blank
+   # s/whitespace from start-of-line,multiple single characters/blank/all occurances
+   #s/^\s*//g;    
+   $inputText =~ s/^[\s|\W]*//g; 
+   
+   # change all to lowercase
+   $inputText =~ tr/[A-Z]/[a-z]/;
+   
+   
+   # if the first upper flag has been set then the first alpha character of every word is to be uppercase
+   if ($allFirstUpper)
+   {
+      # this expression works but it seems overly complicated
+      # first it uses a substitution to match a single lowercase character at the start of each word (stored in $1)
+      # then it evaluates the second expression which returns $1 in uppercase using sprintf
+      # the ge modifiers ensure it's performed for every word and instructs the parser to evalutation the expression
+     
+      $inputText =~ s/(\b[a-z])/sprintf("\U$1")/ge;
+      
+      # note the above expression isn't perfect because the boundary of a word isn't just whitespace
+      # for example, the above expresion would make isn't into Isn'T and i'm into I'M.
+      # the expression below corrects for apostraphies.
+      $inputText =~ s/(\'[A-Z])/sprintf("\L$1")/ge;
+   }
+   else
+   {
+      # --- change first character in a sentance to uppercase ---
+      
+      # a state machine is used to perform the special processing of the string.  This should be 
+      # possible using a regular expression but I couldn't get it to work in every case.  
+      # Instead the string is split into a list of characters...
+      @charList = split //, $inputText;
+   
+      # then set the state machine to search for the next alpha character.  It sets this to uppercase
+      # then searches for the next alphacharacter following a full-stop and sets that to uppercase, then 
+      # repeats the search
+      $state = $SEEKING_NEXT_ALPHA;
+      $index = 0;
+      foreach (@charList)
+      {
+        
+         if ($state == $SEEKING_DOT)
+         {
+            if ($_ =~ m/[\.|\?|\!]/g)
+            {
+               $state = $SEEKING_NEXT_ALPHA;
+            }
+         }
+         else
+         {
+            if ($state == $SEEKING_NEXT_ALPHA)
+            {
+               if ($_ =~ m/[a-z]/gi)
+               {
+                  $_ =~ tr/[a-z]/[A-Z]/;
+                  $charList[$index] = $_;
+                  $state = $SEEKING_DOT;
+               }
+            }
+         }
+       
+         $index++;
+      }
+   
+      # rejoin the array into a string
+      $inputText = join '', @charList;
+       
+   }
+  
+   # special cases
+   $inputText =~ s/(i\'m)/I\'m/gi;
+   $inputText =~ s/(\si\s)/ I /gi;
+   $inputText =~ s/(i\'ve)/I\'ve/gi;
+   $inputText =~ s/(i\'d)/I\'d/gi;
+      
+   # remove multiple whitespaces
+   $inputText =~ s/\s+/ /g;
+   
+   return $inputText;
+}
+
+# -------------------------------------------------------------------------------------------------
+
+# searches the postcode list for a suburb matching the name specified
+sub matchSuburbName
+{   
+   my $sqlClient = shift;
+   my $suburbName = shift;
+   my $state = shift;
+   my %matchedSuburb;
+   
+   if (($sqlClient) && ($suburbName))
+   {       
+      $quotedSuburbName = $sqlClient->quote($suburbName);
+      $quotedState = $sqlClient->quote($state);
+      $statementText = "SELECT locality, postcode, SuburbIndex FROM AusPostCodes WHERE locality like $quotedSuburbName and state like $quotedState order by postcode limit 1";
+            
+      @suburbList = $sqlClient->doSQLSelect($statementText);
+      
+      if ($suburbList[0])
+      {
+         $matchedSuburb{'SuburbName'} = $suburbList[0]{'locality'};
+         $matchedSuburb{'postcode'} = $suburbList[0]{'postcode'};              
+         $matchedSuburb{'SuburbIndex'} = $suburbList[0]{'SuburbIndex'};
+      }                    
+   }   
+   return %matchedSuburb;
+}  
+
 
 # -------------------------------------------------------------------------------------------------
 # parseSearchDetails
@@ -388,7 +738,8 @@ sub parseSearchDetails
       #if ($htmlSyntaxTree->containsTextPattern("Suburb Profile"))
       #{                                    
       # parse the HTML Syntax tree to obtain the advertised sale information
-      %saleProfiles = extractSaleProfile($documentReader, $htmlSyntaxTree, $url);                  
+      %saleProfiles = extractSaleProfile($documentReader, $htmlSyntaxTree, $url);  
+      validateProfile($sqlClient, \%saleProfiles);
                
       # calculate a checksum for the information - the checksum is used to approximately 
       # identify the uniqueness of the data
@@ -477,21 +828,22 @@ sub parseSearchForm
            
       %defaultPostParameters = $htmlForm->getPostParameters();            
       
-      # 21 August 2004 
-      # the default main area in the form is Perth Metropolitan.  Change it to [All]
-      $defaultPostParamters{'MainArea'} = "0";
+      $defaultPostParameters{'MainArea'} = "0";   # all
       
       # for all of the suburbs defined in the form, create a transaction to get it
       $optionsRef = $htmlForm->getSelectionOptions('subdivision');
+      # parse through all those in the perth metropolitan area
       if ($optionsRef)
       {         
          foreach (@$optionsRef)
          {               
             # create a duplicate of the default post parameters
-            my %newPostParameters = %defaultPostParameters;            
-            # and set the value to this option in the selection
+            my %newPostParameters = %defaultPostParameters;
+            
+            # and set the value to this option in the selection            
             
             $newPostParameters{'subdivision'} = $_->{'value'};
+            
             #($firstChar, $restOfString) = split(//, $_->{'text'});
             #print $_->{'text'}, " FC=$firstChar ($startLetter, $endLetter) ";
             $acceptSuburb = 1;
@@ -533,7 +885,70 @@ sub parseSearchForm
          }
       }
       
-      $printLogger->print("   ParseSearchForm:Creating a transaction for $noOfTransactions suburbs...\n");                             
+      $printLogger->print("   ParseSearchForm:Creating a transaction for $noOfTransactions metropolitan suburbs...\n");                             
+
+      
+      # 21 August 2004 - no added regional areas
+      # for all of the suburbs defined in the form, create a transaction to get it
+      $optionsRef = $htmlForm->getSelectionOptions('SubArea');
+      delete $defaultPostParameters{'subdivision'};  # don't set subdivision
+      
+      if ($optionsRef)
+      {         
+         foreach (@$optionsRef)
+         {               
+            # create a duplicate of the default post parameters
+            my %newPostParameters = %defaultPostParameters;
+                         
+            # and set the value to this option in the selection            
+            
+            if ($_->{'value'} != 0)  # ignore [All]
+            {
+               $newPostParameters{'SubArea'} = $_->{'value'};
+            
+               #($firstChar, $restOfString) = split(//, $_->{'text'});
+               #print $_->{'text'}, " FC=$firstChar ($startLetter, $endLetter) ";
+               $acceptSuburb = 1;
+               if ($startLetter)
+               {                              
+                  # if the start letter is defined, use it to constrain the range of 
+                  # suburbs processed
+                  # if the first letter if less than the start then reject               
+                  if ($_->{'text'} lt $startLetter)
+                  {
+                     # out of range
+                     $acceptSuburb = 0;
+                   #  print "out of start range\n";
+                  }                              
+               }
+                          
+               if ($endLetter)
+               {               
+                  # if the end letter is defined, use it to constrain the range of 
+                  # suburbs processed
+                  # if the first letter is greater than the end then reject       
+                  if ($_->{'text'} gt $endLetter)
+                  {
+                     # out of range
+                     $acceptSuburb = 0;
+                   #  print "out of end range\n";
+                  }               
+               }
+                     
+               if ($acceptSuburb)
+               {         
+                  #print "accepted\n";               
+                  my $newHTTPTransaction = HTTPTransaction::new($actionURL, 'POST', \%newPostParameters, $url);
+               
+                  # add this new transaction to the list to return for processing
+                  $transactionList[$noOfTransactions] = $newHTTPTransaction;
+                  $noOfTransactions++;
+               }
+            }
+         }
+      }
+      
+      $printLogger->print("   ParseSearchForm:Creating a transaction for $noOfTransactions total suburbs...\n");                             
    }	  
    else 
    {
@@ -872,8 +1287,9 @@ sub initialiseTableObjects
 {
    my $sqlClient = SQLClient::new(); 
    my $advertisedSaleProfiles = AdvertisedSaleProfiles::new($sqlClient);
- 
-   return ($sqlClient, $advertisedSaleProfiles);
+   my $propertyTypes = PropertyTypes::new($sqlClient);
+   
+   return ($sqlClient, $advertisedSaleProfiles, $propertyTypes);
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -887,6 +1303,7 @@ sub parseParameters
    my $startSession;
    my $continueSession;
    my $dropTables;
+   my $maintenance;
    
    $createTables = param("create");
    
@@ -896,17 +1313,178 @@ sub parseParameters
    
    $dropTables = param("drop");
    
+   $maintenance = param("maintenance");
+   
    $startLetter = param("startrange");
    $endLetter = param("endrange");
    $agent = param("agent");
    $statusPort = param("port");
-
-   if (($createTables) || ($startSession) || ($continueSession) || ($dropTables))
+   $state = param("state");
+   $targetDatabase = param("database");
+   
+   if (($createTables) || ($startSession) || ($continueSession) || ($dropTables) || ($maintenance))
    {
       $result = 1;
    }
    
-   return ($result, $createTables, $startSession, $continueSession, $dropTables);   
+   return ($result, $createTables, $startSession, $continueSession, $dropTables, $maintenance);   
 }
 
+# -------------------------------------------------------------------------------------------------
 
+sub doMaintenance
+{   
+   my $printLogger = shift;   
+   my $sqlClient = SQLClient::new(); 
+   my $advertisedSaleProfiles = AdvertisedSaleProfiles::new($sqlClient);
+   my $propertyTypes = PropertyTypes::new($sqlClient);
+   
+   my $targetSQLClient = SQLClient::new($targetDatabase);
+   my $targetAdvertisedSaleProfiles = AdvertisedSaleProfiles::new($targetSQLClient);
+  
+   $printLogger->print("---Performing Maintenance---\n");
+   
+   # 25 July 2004 - generate an instance ID based on current time and a random number.  The instance ID is 
+   # used in the name of the logfile
+   my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
+   $year += 1900;
+   $mon++;
+   my $randNo = rand 1000;
+   my $instanceID = sprintf("%s_%4i%02i%02i%02i%02i%02i_%04i", $agent, $year, $mon, $mday, $hour, $min, $sec, $randNo);
+
+   #maintenance_ValidateContents($printLogger, $instanceID, $targetDatabase);
+   maintenance_DeleteDuplicates($printLogger, $instanceID, $targetDatabase);
+   
+   $printLogger->print("---Finished Maintenance---\n");
+   
+}
+
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+
+sub maintenance_ValidateContents
+{   
+   my $printLogger = shift;   
+   my $instanceID = shift;
+   my $targetDatabase = shift;
+  
+   my $sqlClient = SQLClient::new(); 
+   my $advertisedSaleProfiles = AdvertisedSaleProfiles::new($sqlClient);
+   my $propertyTypes = PropertyTypes::new($sqlClient);
+   my $targetSQLClient = SQLClient::new($targetDatabase);
+   my $targetAdvertisedSaleProfiles = AdvertisedSaleProfiles::new($targetSQLClient);
+  
+   if ($targetDatabase)
+   {
+      # enable logging to disk by the SQL client
+      $sqlClient->enableLogging($instanceID);
+      # enable logging to disk by the SQL client
+      $targetSQLClient->enableLogging("t_".$instanceID);
+      
+      $sqlClient->connect();
+      $targetSQLClient->connect();
+      
+      $printLogger->print("Dropping Target Database table...\n");
+      $targetAdvertisedSaleProfiles->dropTable();
+      
+      $printLogger->print("Creating Target Database emptytable...\n");
+      $targetAdvertisedSaleProfiles->createTable();
+      
+      $printLogger->print("Performing Source database validation...\n");
+      
+      @selectResult = $sqlClient->doSQLSelect("select * from AdvertisedSaleProfiles order by DateEntered");
+      $length = @selectResult;
+      $printLogger->print("   $length records.\n");
+      foreach (@selectResult)
+      {
+         # $_ is a reference to a hash for the row of the table
+         $oldChecksum = $$_{'checksum'};
+         #$printLogger->print($$_{'DateEntered'}, " ", $$_{'SourceName'}, " ", $$_{'SuburbName'}, "(", $_{'SuburbIndex'}, ") oldChecksum=", $$_{'Checksum'});
+   
+         validateProfile($sqlClient, $_);
+         
+         # IMPORTANT: delete the Identifier element of the hash so it's not included in the checksum - otherwise the checksum 
+         # would always differ between attributes
+         delete $$_{'Identifier'};
+         $checksum = DocumentReader::calculateChecksum(undef, $_);
+         #$printLogger->print(" | ", $$_{'SuburbName'}, "(", $$_{'SuburbIndex'}, ") newChecksum=$checksum\n");
+ 
+         $printLogger->print("---", $$_{'DateEntered'}, " ", $$_{'SuburbName'}, "(", $$_{'SuburbIndex'}, ")\n");
+         $$_{'Checksum'} = $checksum;
+         
+         #   $printLogger->print($$_{'Description'}, "\n");
+         #DebugTools::printHash("data", $_);
+         
+         # do an sql insert into the target database
+         $printLogger->print("   Inserting into target database...\n");        
+         $targetSQLClient->doSQLInsert("AdvertisedSaleProfiles", $_);
+      }
+      $targetSQLClient->disconnect();
+      $sqlClient->disconnect();
+   }
+   else
+   {
+       $printLogger->print("   target database name not specified\n");
+   }
+}
+
+# -------------------------------------------------------------------------------------------------
+
+sub maintenance_DeleteDuplicates
+{   
+   my $printLogger = shift;   
+   my $instanceID = shift;
+   my $targetDatabase = shift;
+  
+   my $sqlClient = SQLClient::new(); 
+   my $advertisedSaleProfiles = AdvertisedSaleProfiles::new($sqlClient);
+   my $propertyTypes = PropertyTypes::new($sqlClient);
+   my $targetSQLClient = SQLClient::new($targetDatabase);
+   my $targetAdvertisedSaleProfiles = AdvertisedSaleProfiles::new($targetSQLClient);
+  
+   if ($targetDatabase)
+   {
+      # enable logging to disk by the SQL client
+      $sqlClient->enableLogging($instanceID);
+      # enable logging to disk by the SQL client
+      $targetSQLClient->enableLogging("dups_".$instanceID);
+      
+      $sqlClient->connect();
+      $targetSQLClient->connect();
+      
+      $printLogger->print("Deleting duplicate entries...\n");
+      @selectResult = $targetSQLClient->doSQLSelect("select identifier, sourceID, checksum from AdvertisedSaleProfiles order by sourceID, checksum");
+      $length = @selectResult;
+      $index = 0;
+      print "$length total records...\n";
+      $duplicates = 0;
+      foreach (@selectResult)
+      {
+         if ($index > 0)
+         {
+            print "$index...", $$_{'sourceID'}, "\n";
+            # check if this record exactly matches the last one
+            if (($$_{'sourceID'} eq $$lastRecord{'sourceID'}) && ($$_{'checksum'} eq $$lastRecord{'checksum'}))
+            {
+               print "Duplicate found: ", $$_{'sourceID'}, " (", $$_{'checksum'}, "): identifiers: ", $$lastRecord{'identifier'}, " and ", $$_{'identifier'}, "\n";
+               $printLogger->print("   Deleteing from target database...\n");     
+               if ($targetSQLClient->prepareStatement("delete from AdvertisedSaleProfiles where identifier = ".$targetSQLClient->quote($$_{'identifier'})))
+               {
+                  $targetSQLClient->executeStatement();
+                  $duplicates++;
+               }
+            }
+         }
+         $lastRecord=$_;
+         $index++;
+      }
+      print "$duplicates deleted.\n";
+
+      $targetSQLClient->disconnect();
+      $sqlClient->disconnect();
+   }
+   else
+   {
+       $printLogger->print("   target database name not specified\n");
+   }
+}

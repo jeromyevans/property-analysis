@@ -10,6 +10,9 @@
 #
 # History
 #  22 May 2004 - added doSqlSelect for generic selection operations
+#   6 Sep 2004 - added doSQLInsert for generic insert operations
+#              - added option to new to specify database name
+#  12 Sep 2004 - added support for logging SQL statements that write to the database
 #
 # CONVENTIONS
 # _ indicates a private variable or method
@@ -39,9 +42,19 @@ use DBI;
 # PUBLIC
 sub new
 {   
-  
+   
+   my $databaseName = shift;
+   
+   if (!$databaseName)
+   {
+      $databaseName = "PropertyData";
+   }
+   
    my $sqlClient = {         
-      dbiHandle => "instanceNotConnected"      
+      dbiHandle => "instanceNotConnected",
+      databaseName => $databaseName,
+      loggingEnabled => 0,
+      sessionName => undef
    }; 
       
    bless $sqlClient;     
@@ -50,6 +63,36 @@ sub new
 }
 
 # -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+# enableLogging
+# sets a flag so all write/update commands are logged to disk - need to specify a session name
+# 
+# Purpose:
+#  Setting up the database interface
+#
+# Parameters:
+#  string sessionName
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  this->{'sessionName'}
+#
+# Returns:
+#   nil
+#
+sub enableLogging($)
+
+{
+   my $this = shift;
+   my $sessionName = shift;
+   
+   $this->{'sessionName'} = $sessionName;
+   $this->{'loggingEnabled'} = 1;
+}
+
 # -------------------------------------------------------------------------------------------------
 # connect
 # opens the connection to the SQL database
@@ -74,7 +117,7 @@ sub connect
 {
    my $this = shift;
    
-   my $dbiHandle = DBI->connect("DBI:mysql:PropertyData", "propagent", "propagent9");
+   my $dbiHandle = DBI->connect("DBI:mysql:".$this->{'databaseName'}, "propagent", "propagent9");
    
    if ($dbiHandle)
    {
@@ -245,7 +288,14 @@ sub executeStatement
          if ($statementHandle->execute(@$bindValues))
          {
             $success = 1;        
-            
+            if ($this->{'loggingEnabled'})
+            {
+               # if this is an update activity then log the statement
+               if ($this->{'statementText'} =~ /^(delete|insert|replace|truncate|update|alter|create|drop|rename)/i)
+               {
+                  $this->saveSQLLog();
+               }
+            }
          }
          else
          {
@@ -411,3 +461,100 @@ sub doSQLSelect
 }  
 
 # -------------------------------------------------------------------------------------------------
+# performs a generic insert for the speicified table name and hash of parameters (column & value pairs)
+sub doSQLInsert
+
+{
+   my $this = shift;
+   my $tableName = shift;
+   my $parametersRef = shift;
+ 
+   my $success = 0;
+   my $statementText;
+   my $appendString = "";
+   
+   $statementText = "INSERT INTO $tableName (";
+      
+   @columnNames = keys %$parametersRef;
+ 
+   $index = 0;
+   foreach (@columnNames)
+   {
+      if ($index != 0)
+      {
+         $appendString = $appendString.", ";
+      }
+     
+      $appendString = $appendString . $_;
+      $index++;
+   }      
+   
+   $statementText = $statementText.$appendString . ") VALUES (";
+
+   # modify the statement to specify each column value to set 
+   @columnValues = values %$parametersRef;
+  
+   $appendString = "";
+   $index = 0;
+   foreach (@columnValues)
+   {
+      if ($index != 0)
+      {
+         $appendString = $appendString.", ";
+      }
+     
+      $appendString = $appendString.$this->quote($_);
+      $index++;
+   }
+   $statementText = $statementText.$appendString . ")";
+   
+   $statement = $this->prepareStatement($statementText);
+   if ($this->executeStatement($statement))
+   {
+      $success = 1;
+   }
+   
+   
+   return $success;   
+}
+
+# -------------------------------------------------------------------------------------------------
+# saveTransactionLog
+#  saves to disk the request and response for a transaction (for debugging) 
+# 
+# Purpose:
+#  Debugging
+#
+# Parametrs:
+#  integer transactionNo (optional)
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  $this->{'requestRef'} 
+#  $this->{'responseRef'}
+#
+# Returns:
+#   nil
+#
+sub saveSQLLog()
+
+{
+   my $this = shift;
+   my $sessionName = $this->{'sessionName'};
+   my $sessionFileName = $sessionName.".sqlt";
+   
+  ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
+   $year += 1900;
+   $mon++;
+   
+   mkdir "logs", 0755;       	      
+   open(SESSION_FILE, ">>logs/$sessionFileName") || print "Can't open file: $!"; 
+           
+   print SESSION_FILE "\n<sql_transaction instance='$sessionName' year='$year' mon='$mon' mday='$mday' hour='$hour' min='$min' sec='$sec'>\n";
+   print SESSION_FILE $this->{'statementText'};
+   print SESSION_FILE "\n</sql_transaction>\n";   
+      
+   close(SESSION_FILE);      
+}

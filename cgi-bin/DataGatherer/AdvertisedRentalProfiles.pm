@@ -16,7 +16,11 @@
 #   10 July 2004 - modified to combine with log table (added fields source URL, lastEncountered date etc)
 #     to support searches such as 'still advertised'
 #   25 July 2004 - added support for instance ID and transactionNo
-
+#   22 August 2004 - added support for State column
+#                  - renamed suburbIdentifier to suburbIndex
+#   12 September 2004 - added support to specify the DateEntered field instead of using the current time.  This
+#     is necessary to support the database recovery function (which uses the time it was logged instead of
+#     now)
 #
 # CONVENTIONS
 # _ indicates a private variable or method
@@ -50,7 +54,9 @@ sub new
    
    my $advertisedRentalProfiles = { 
       sqlClient => $sqlClient,
-      tableName => "advertisedRentalProfiles"
+      tableName => "advertisedRentalProfiles",
+      useCurrentTime => 1,
+      dateEntered => undef
    }; 
       
    bless $advertisedRentalProfiles;     
@@ -94,6 +100,7 @@ my $SQL_CREATE_TABLE_STATEMENT = "CREATE TABLE IF NOT EXISTS AdvertisedRentalPro
     "Identifier INTEGER ZEROFILL PRIMARY KEY AUTO_INCREMENT, ".    
     "SuburbIdentifier INTEGER, ".
     "SuburbName TEXT, ".
+    "State TEXT, ".
     "Type VARCHAR(10), ".
     "Bedrooms INTEGER, ".
     "Bathrooms INTEGER, ".        
@@ -125,6 +132,49 @@ sub createTable
    }
    
    return $success;   
+}
+
+
+# -------------------------------------------------------------------------------------------------
+# setDateEntered
+# sets the dateEntered field to use for the next add (instead of currentTime)
+# 
+# Purpose:
+#  Storing information in the database
+#
+# Parameters:
+#  string source name
+#  reference to a hash containing the values to insert
+#  string sourceURL
+#  integer checksum
+#  string instanceID
+#  integer transactionNo
+#
+# Constraints:
+#  nil
+#
+# Uses:
+#  sqlClient
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   TRUE (1) if successful, 0 otherwise
+#        
+sub setDateEntered
+
+{
+   my $this = shift;
+   my $currentYear = shift;
+   my $currentMonth = shift;
+   my $currentDay = shift;
+   my $currentHour = shift;
+   my $currentMin = shift;
+   my $currentSec = shift;
+   
+   $this->{'dateEntered'} = sprintf("%4d-%02d-%02d %02d:%02d:%02d", $currentYear, $currentMonth, $currentDay, $currentHour, $currentMin, $currentSec);
+   $this->{'useDifferentTime'} = 1;
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -164,6 +214,7 @@ sub addRecord
    my $success = 0;
    my $sqlClient = $this->{'sqlClient'};
    my $statementText;
+   my $localTime;
    
    if ($sqlClient)
    {
@@ -193,7 +244,19 @@ sub addRecord
       $quotedSource = $sqlClient->quote($sourceName);
       $quotedUrl = $sqlClient->quote($url);
       $quotedInstance = $sqlClient->quote($instanceID);
-      $appendString = "localtime(), null, $quotedSource, $quotedUrl, $checksum, $quotedInstance, $transactionNo, ";
+      
+      if (!$this->{'useDifferentTime'})
+      {
+         $localTime = "localtime()";
+      }
+      else
+      {
+         # use the specified date instead of the current time
+         $localTime = $sqlClient->quote($this->{'dateEntered'});
+         $this->{'useDifferentTime'} = 0;  # reset the flag
+      }   
+      
+      $appendString = "$localTime, null, $quotedSource, $quotedUrl, $checksum, $quotedInstance, $transactionNo, ";
       foreach (@columnValues)
       {
          if ($index != 0)
@@ -454,6 +517,7 @@ sub addEncounterRecord
    my $sqlClient = $this->{'sqlClient'};  
    my $tableName = $this->{'tableName'};
    my $statementText;
+   my $localTime;
    
    if ($sqlClient)
    {
@@ -461,16 +525,27 @@ sub addEncounterRecord
       $quotedSourceID = $sqlClient->quote($sourceID);
       $quotedUrl = $sqlClient->quote($url);
   
+      if (!$this->{'useDifferentTime'})
+      {
+         $localTime = "localtime()";
+      }
+      else
+      {
+         # use the specified date instead of the current time
+         $localTime = $sqlClient->quote($this->{'dateEntered'});
+         $this->{'useDifferentTime'} = 0;  # reset the flag
+      }   
+  
       if (defined $checksum)
       {
          $statementText = "UPDATE $tableName ".
-           "SET LastEncountered = localtime() ".
+           "SET LastEncountered = $localTime ".
            "WHERE (sourceID = $quotedSourceID AND sourceName = $quotedSource AND checksum = $checksum)";
       }
       else
       {
          $statementText = "UPDATE $tableName ".
-           "SET LastEncountered = localtime() ".
+           "SET LastEncountered = $localTime ".
            "WHERE (sourceID = $quotedSourceID AND sourceName = $quotedSource)";
       }
       

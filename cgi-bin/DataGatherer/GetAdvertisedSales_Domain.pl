@@ -140,6 +140,9 @@ if (($parseSuccess) && ($parameters{'url'}) && ($state) && ($city))
    ($sqlClient, $advertisedSaleProfiles) = initialiseTableObjects();
    # hash of table objects - the key's are only significant to the local callback functions
  
+   # enable logging to disk by the SQL client
+   $sqlClient->enableLogging($instanceID);
+   
    $myTableObjects{'advertisedSaleProfiles'} = $advertisedSaleProfiles;
    
    $myParsers{"ChooseState"} = \&parseChooseState;
@@ -418,7 +421,8 @@ sub extractSaleProfile
       $saleProfile{'Features'} = $features;
    }
 
-     
+   $saleProfile{'State'} = $state;
+ 
    #DebugTools::printHash("SaleProfile", \%saleProfile);
         
    return %saleProfile;  
@@ -469,7 +473,7 @@ sub parsePropertyDetails
                                          
       # parse the HTML Syntax tree to obtain the advertised sale information
       %saleProfiles = extractSaleProfile($documentReader, $htmlSyntaxTree, $url);                  
-            
+      
       # calculate a checksum for the information - the checksum is used to approximately 
       # identify the uniqueness of the data
       $checksum = $documentReader->calculateChecksum(\%saleProfiles);

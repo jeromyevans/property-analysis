@@ -83,6 +83,7 @@ my $continueSession = 0;
 my $startLetter;
 my $endLetter;
 my $agent;
+my $state;
 
 my $useHTML = param('html');
 
@@ -119,11 +120,14 @@ if (!$parameters{'url'})
    $printLogger->print("   main: Configuration file not found\n");
 }
 
-if (($parseSuccess) && ($parameters{'url'}))
+if (($parseSuccess) && ($parameters{'url'}) && ($state))
 {               
    ($sqlClient, $advertisedRentalProfiles) = initialiseTableObjects();
    # hash of table objects - the key's are only significant to the local callback functions
  
+   # enable logging to disk by the SQL client
+   $sqlClient->enableLogging($instanceID);
+   
    $myTableObjects{'advertisedRentalProfiles'} = $advertisedRentalProfiles;
    
    $myParsers{"searchdetails"} = \&parseSearchDetails;
@@ -141,6 +145,11 @@ if (($parseSuccess) && ($parameters{'url'}))
 }
 else
 {
+   if (!$state)
+   {
+      $printLogger->print("   main: state not specified\n");
+   }
+   
    $printLogger->print("   main: No action requested\n");
 }
 
@@ -307,7 +316,9 @@ sub extractRentalProfile
       $rentalProfile{'Features'} = $features;
    }
         
-        
+ 
+   $rentalProfile{'State'} = $state;
+       
    return %rentalProfile;  
 }
 
@@ -850,6 +861,8 @@ sub parseParameters
    $startLetter = param("startrange");
    $endLetter = param("endrange");
    $agent = param("agent");
+   $state = param("state");
+
 
    if (($createTables) || ($startSession) || ($continueSession) || ($dropTables))
    {
