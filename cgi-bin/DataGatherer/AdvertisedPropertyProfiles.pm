@@ -1318,7 +1318,7 @@ sub _workingView_changeRecord
          }
          
          $quotedValue = $sqlClient->quote($value);
-         $appendString = $appendString . "$field = $quotedValue";
+         $appendString = $appendString . "$field = $quotedValue ";
          $index++;
       }      
       

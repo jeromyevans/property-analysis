@@ -5,6 +5,10 @@
 # Provides functions for performing analysis of the property database
 #
 # Started: 16 June 2004
+#
+# History
+#   9 Dec 04 - changed to use MasterPropertyTable and WorkingView_AdvertisedRentalProfiles
+
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -155,8 +159,8 @@ sub fetchAnalysisData
 {
    my $this = shift;
    my $sqlClient = $this->{'sqlClient'};
-   my @salesResults = $sqlClient->doSQLSelect("select StreetNumber, Street, SuburbName, AdvertisedPriceLower, AdvertisedPriceUpper, Bedrooms, Bathrooms from AdvertisedSaleProfiles where ".$this->{'suburbSearch'}." ".$this->{'typeSearch'}." ".$this->{'bedroomsSearch'}." ".$this->{'bathroomsSearch'}." order by SuburbName, Bedrooms, Bathrooms");
-   my @rentalResults = $sqlClient->doSQLSelect("select StreetNumber, Street, SuburbName, AdvertisedWeeklyRent, Bedrooms, Bathrooms from AdvertisedRentalProfiles where ".$this->{'suburbSearch'}." ".$this->{'typeSearch'}." ".$this->{'bedroomsSearch'}." ".$this->{'bathroomsSearch'}." order by SuburbName, Bedrooms, Bathrooms");
+   my @salesResults = $sqlClient->doSQLSelect("select StreetNumber, Street, SuburbName, AdvertisedPriceLower, AdvertisedPriceUpper, Bedrooms, Bathrooms from MasterPropertyTable where ".$this->{'suburbSearch'}." ".$this->{'typeSearch'}." ".$this->{'bedroomsSearch'}." ".$this->{'bathroomsSearch'}." order by SuburbName, Street, StreetNumber, Bedrooms, Bathrooms");
+   my @rentalResults = $sqlClient->doSQLSelect("select StreetNumber, Street, SuburbName, AdvertisedWeeklyRent, Bedrooms, Bathrooms from WorkingView_AdvertisedRentalProfiles where ".$this->{'suburbSearch'}." ".$this->{'typeSearch'}." ".$this->{'bedroomsSearch'}." ".$this->{'bathroomsSearch'}." order by SuburbName, Bedrooms, Bathrooms");
    
    $this->{'salesResultsList'} = \@salesResults;
    $this->{'rentalResultsList'} = \@rentalResults;

@@ -388,6 +388,14 @@ sub doMaintenance
       $actionOk = 1;
    }
    
+   if ($$parametersRef{'action'} =~ /constructMasterComponents/i)
+   {
+      $printLogger->print("---Performing Maintenance - constructing Master Components for Properties ---\n");
+      maintenance_ConstructMasterComponents($printLogger, $$parametersRef{'instanceID'}, $$parametersRef{'database'});
+      $printLogger->print("---Finished Maintenance---\n");
+      $actionOk = 1;
+   }
+   
    if (!$actionOk)
    {
       $printLogger->print("maintenance: requested action isn't recognised\n");
@@ -403,6 +411,7 @@ sub doMaintenance
       $printLogger->print("   constructPropertyTable      - rebuild the MasterPropertyTable\n");
       $printLogger->print("   updateProperties  - process recently added advertisements\n");
       $printLogger->print("   constructXRef     - construct the Property->Component XRef table (built by constructPropertyTable automatically)\n");            
+      $printLogger->print("   constructMasterComponents   - calculate the components of MasterPropertyTable (built by constructPropertyTable automatically)\n");            
       $printLogger->print("   _rebuild          - dump all views and rebuild from raw advertisements (MANUAL CHANGES WILL BE LOST)\n");            
    }
    
@@ -968,8 +977,8 @@ sub maintenance_ConstructPropertyTable
    my $instanceID = shift;
   
    my $sqlClient = SQLClient::new(); 
-   my $masterPropertyTable = MasterPropertyTable::new($sqlClient);
    my $advertisedSaleProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Sales');
+   my $masterPropertyTable = MasterPropertyTable::new($sqlClient, $advertisedSaleProfiles);
    my $transactionNo = 0;
    my $propertiesCreated = 0;
    
@@ -1002,7 +1011,8 @@ sub maintenance_ConstructPropertyTable
          # link the workingview record as a componentOf the property using the returned identifier
          $propertiesCreated++;
         
-         $advertisedSaleProfiles->workingView_setSpecialField($$_{'Identifier'}, 'ComponentOf', $identifier);   
+         # the link below was moved into linkRecord 
+         # $advertisedSaleProfiles->workingView_setSpecialField($$_{'Identifier'}, 'ComponentOf', $identifier);   
       }
    }
    $totalProperties = $masterPropertyTable->countEntries();
@@ -1027,8 +1037,8 @@ sub maintenance_UpdateProperties
    
    
    my $sqlClient = SQLClient::new(); 
-   my $masterPropertyTable = MasterPropertyTable::new($sqlClient);
    my $advertisedSaleProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Sales');
+   my $masterPropertyTable = MasterPropertyTable::new($sqlClient, $advertisedSaleProfiles);
    my $transactionNo = 0;
    my $propertiesCreated = 0;
    
@@ -1056,7 +1066,8 @@ sub maintenance_UpdateProperties
          # link the workingview record as a componentOf the property using the returned identifier
          $propertiesCreated++;
         
-         $advertisedSaleProfiles->workingView_setSpecialField($$_{'Identifier'}, 'ComponentOf', $identifier);   
+         # the line below was moved into linkRecord
+         #$advertisedSaleProfiles->workingView_setSpecialField($$_{'Identifier'}, 'ComponentOf', $identifier);   
       }
    }
    $totalProperties = $masterPropertyTable->countEntries();
@@ -1122,17 +1133,17 @@ sub maintenance_ConstructXRef
    
    $printLogger->print("Rebuilding Property->Component XRef table...\n");
    
-   my $sqlClient = SQLClient::new(); 
-   my $masterPropertyTable = MasterPropertyTable::new($sqlClient);
+   my $sqlClient = SQLClient::new();
+   my $masterPropertyTable = MasterPropertyTable::new($sqlClient, undef);
    
    # enable logging to disk by the SQL client
    $sqlClient->enableLogging($instanceID);
    
    $sqlClient->connect();
    
-   $printLogger->print("Erasing the PropertyComponentsXRef table...\n");
+   $printLogger->print("Erasing the MasterPropertyComponentsXRef table...\n");
    
-   $statement = $sqlClient->prepareStatement("delete from PropertyComponentsXRef");
+   $statement = $sqlClient->prepareStatement("delete from MasterPropertyComponentsXRef");
    $sqlClient->executeStatement($statement);
    
    $printLogger->print("Fetching WORKING VIEW database records that have ComponentOf set...\n");
@@ -1143,7 +1154,7 @@ sub maintenance_ConstructXRef
    $length = @selectResult;
    $printLogger->print("   $length records.\n");
    
-   $printLogger->print("Updating PropertyComponentsXRef...\n");
+   $printLogger->print("Updating MasterPropertyComponentsXRef...\n");
    
    foreach (@selectResult)
    {
@@ -1159,11 +1170,58 @@ sub maintenance_ConstructXRef
    $totalProperties = $masterPropertyTable->countEntries();
    
    print "   Linked $componentsLinked components\n";
-   print "PropertyComponentsXRef is synchronised\n";
+   print "MasterPropertyComponentsXRef is synchronised\n";
 
 }
 
 # -------------------------------------------------------------------------------------------------
+
+# -------------------------------------------------------------------------------------------------
+# iterates through all the properties and used the XRef and a selection algorithm to set
+# the master components of the MasterPropertyTable
+sub maintenance_ConstructMasterComponents
+{   
+   my $printLogger = shift;   
+   my $instanceID = shift;
+   my $propertiesUpdated = 0;
+   
+   $printLogger->print("Recaclulating MasterComponents of MasterPropertyTable table...\n");
+   
+   my $sqlClient = SQLClient::new(); 
+   my $advertisedSaleProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Sales');
+   my $masterPropertyTable = MasterPropertyTable::new($sqlClient, $advertisedSaleProfiles);
+   
+   # enable logging to disk by the SQL client
+   $sqlClient->enableLogging($instanceID);
+   
+   $sqlClient->connect();
+   
+   $printLogger->print("Fetching MasterPropertyTable identifiers...\n");
+   
+   # get the content of the table
+   @selectResult = $sqlClient->doSQLSelect("select Identifier from MasterPropertyTable ");
+   
+   $length = @selectResult;
+   $printLogger->print("   $length records.\n");
+   
+   $printLogger->print("Updating Master Components from XRef for each property...\n");
+   
+   foreach (@selectResult)
+   {
+      $propertyID = $$_{'Identifier'};
+     
+      $success = $masterPropertyTable->_calculateMasterComponents($propertyID);
+      if ($success)
+      {
+         $propertiesUpdated++;
+      }
+      
+   }
+   
+   print "   Updated $propertiesUpdated properties\n";
+   
+   print "MasterPropertyTable is synchronised\n";
+}
 
 
 # -------------------------------------------------------------------------------------------------

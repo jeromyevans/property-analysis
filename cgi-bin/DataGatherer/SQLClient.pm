@@ -15,7 +15,7 @@
 #  12 Sep 2004 - added support for logging SQL statements that write to the database
 #  27 Nov 2004 - added function alterForeignKey() tha's used to change/set the value of a (non-strict) foreign key 
 # for the specified table and primary key
-# 
+#  8 Dec 2004  - modified quote to return 'null' for undef variables instead of the default of '';
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -422,7 +422,15 @@ sub quote
    
    if ($dbiHandle)
    {
-      $result = $dbiHandle->quote($string);
+      if (($string) && ($string ne ''))
+      {
+         $result = $dbiHandle->quote($string);
+      }
+      else
+      {         
+         $result = 'null';
+      }
+      
    }
    
    return $result;  

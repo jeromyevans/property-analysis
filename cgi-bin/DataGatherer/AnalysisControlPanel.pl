@@ -21,8 +21,7 @@ use HTTPClient;
 use SQLClient;
 use SuburbProfiles;
 use DebugTools;
-use AdvertisedRentalProfiles;
-use AdvertisedSaleProfiles;
+use AdvertisedPropertyProfiles;
 use AnalysisTools;
 use HTMLTemplate;
 #use URI::Escape::uri_escape;
@@ -461,7 +460,6 @@ sub callback_propertyList
          
          #$suburbName = URI::Escape::uri_escape($_);      
          $suburbName = $$_{'SuburbName'};
-         $suburbName =~ tr/[A-Z]/[a-z]/;                    
          
          $addressInstance = $$_{'StreetNumber'}." ".$$_{'Street'}." ".$$_{'SuburbName'};
          $lowerPriceInstance = commify(sprintf("\$%.0f", $$_{'AdvertisedPriceLower'}));
@@ -487,8 +485,6 @@ sub callback_propertyList
 print header();
 
 $sqlClient = SQLClient::new(); 
-$advertisedSaleProfiles = AdvertisedSaleProfiles::new($sqlClient);
-$advertisedRentalProfiles = AdvertisedRentalProfiles::new($sqlClient);
 $suburbProfiles = SuburbProfiles::new($sqlClient);
 
 if ($sqlClient->connect())
