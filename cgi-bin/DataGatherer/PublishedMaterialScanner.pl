@@ -1083,8 +1083,7 @@ sub maintenance_UpdateProperties
    
    $printLogger->print("Updating properties...\n");
 
-   #maintenance_ValidateSaleContents($printLogger, $instanceID);
-   
+   maintenance_ValidateSaleContents($printLogger, $instanceID);
    
    my $sqlClient = SQLClient::new(); 
    my $advertisedSaleProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Sales');

@@ -644,6 +644,178 @@ sub stringContainsPattern
 # Returns:
 #  array of Http transactions
 #  
+
+sub _parseDocumentTemp
+{
+   my $this = shift;
+   my $nextTransaction = shift;
+   my $httpClient = shift;
+   
+   my $content;
+   my @frameList;
+   my $absoluteURL;
+   
+   my @newTransactionStack;    
+   my $httpTransaction;
+       
+   my $url;
+   my @frameClientList;
+   my $frameHTTPclient;
+   my $noOfFrames = 0;
+   my $inTopFrame = 1; 
+   
+   # initialise an htmlSyntaxTree for parsing the HTML documents....
+   my $htmlSyntaxTree = HTMLSyntaxTree->new();   
+   
+   my $parserHashRef = $this->{'parserHashRef'};
+   # get the list of pattterns for which a parser has been defined      
+   my @parserPatternList = keys %$parserHashRef; 
+   
+   $url = $nextTransaction->getURL();   
+   
+   $content = $httpClient->getResponseContent();               
+   $htmlSyntaxTree->parseContent($content);   
+   
+   # store the top page as the first index in the frame list
+   $frameClientList[0] = $httpClient;
+   $noOfFrames++;
+    	       
+   # parse all of the loaded frames in series (including the top page)
+   #   (run callback function to get list of URL's for the session)
+   foreach (@frameClientList)
+   {  
+      $url = $_->getURL();
+      $thisTransaction = $_->getHTTPTransaction();
+
+      # for the very first element (the top window) don't need to parse
+      # the content again - it was done already to determine if there's 
+      # any frames
+      if (!$inTopFrame)
+      {
+         print "parsing frame content...\n";
+         $content = $_->getResponseContent();
+         $htmlSyntaxTree->parseContent($content);
+      }
+      else
+      {
+         # this was the first - clear the flag
+         $inTopFrame = 0;
+      }   
+      
+      # determine if there's a parser defined for this url...
+      if (($parserIndex = stringContainsPattern($url, \@parserPatternList)) >= 0)
+   	{
+	      print "calling callback #$parserIndex...\n";
+      
+         # referer stack processing....
+         
+         # update the referer stack before processing...
+         # if this URL isn't already in the stack, push it on the end
+         $index = 0;
+         $found = 0;
+         foreach (@refererStack)
+         {
+            # if this referer is already in the stack, drop back to that level
+            if (($thisTransaction->getURL() eq $_->getURL()) && ($thisTransaction->getMethod() eq $_->getMethod()))
+            {
+               # already in stack - truncate the array at this element
+               #print "   truncate list at element ", $index, "\n";
+               $#refererStack = $index;
+               $found = 1;
+               last;
+            }
+            $index++;
+         }
+         # if the element isn't in the stack, push it onto the list
+         if (!$found)
+         {
+            push @refererStack, $thisTransaction;
+         }
+         
+         # print the referer stack...
+         #$index = 0;
+         #foreach (@refererStack)
+         #{
+         #   print "   $index: ", $_->getMethod(), " ", $_->getURL(), "\n";
+         #   $index++;
+         #}
+         #print "     (", $thisTransaction->getMethod(), " ", $thisTransaction->getURL(), ")\n";
+
+         ## save the referer stack to disk
+         #$this->saveRefererStack(\@refererStack);
+#         
+         #($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
+         #$year += 1900;
+         #$mon++;      
+#               
+         #$displayStr = sprintf("%02d:%02d:%02d  parsing...\n", $hour, $min, $sec);     
+         #$printLogger->print($displayStr);
+#         
+	      ## 26 September 2004 - measure how long the callback takes to run  
+         #$startTime = time;
+#         
+	   	# get the value from the hash with the pattern matching the callback function
+		   # the value in the cash is a code reference (to the callback function)		            
+		   #my $callbackFunction = $$parserHashRef{$parserPatternList[$parserIndex]};		  		  
+         #my @callbackTransactionStack = &$callbackFunction($this, $htmlSyntaxTree, $url, $this->{'instanceID'}, $this->{'transactionNo'}, $this->{'threadID'}, $nextTransaction->getLabel());
+		
+         #$endTime = time;
+         #$runningTime = $endTime - $startTime;
+           ##print "Transaction $transactionNo took $runningTime seconds\n";
+         #if ($runningTime > 20)
+         #{
+            #$printLogger->print("Getting very slow...low memory....halting this instance (should automatically restart)\n");
+            #$this->{'lowMemoryError'} = 1;
+         #}
+            
+         ## loop through the transactions in reverse so when they're pushed onto 
+         ## the stack the order is maintained for popping.
+         #foreach (reverse @callbackTransactionStack)
+         #{
+#            
+            ## if this is a refence then it's an HTTPTransaction, otherwise
+            ##  it'ss a URL
+            #if (ref($_))
+            #{                        
+               #$httpTransaction = $_;
+            #}
+            #else
+            #{
+               ## this is a URL to GET - create a new transaction (use the base URL as referrer)
+               #$absoluteURL = new URI::URL($_, $url)->abs()->as_string();		               
+               #$httpTransaction = HTTPTransaction::new($absoluteURL, $url, $nextTransaction->getLabel()."?");
+            #}
+#                     	                                          
+		      #push @newTransactionStack, $httpTransaction;                                          
+	      #}
+      }
+	}
+   
+   return \@newTransactionStack;
+}
+
+# -------------------------------------------------------------------------------------------------
+
+# _parseDocument
+# parses a received document, calling local callback's if necessary and
+# returns a new list of transactions to process
+
+# Purpose:
+#  loading a document via HTTP
+#
+# Parameters:
+#  httpTransaction in progress
+#  httpclient to use
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  nil
+#
+# Returns:
+#  array of Http transactions
+#  
 sub _parseDocument
 {
    my $this = shift;
@@ -1041,6 +1213,233 @@ sub run ( $ )
                }
                
 	            $httpClient->back();
+            }            
+         } 
+         else
+         {
+	         # this URL wasn't defined - could be at end of session            
+	         $urlValid = 0;
+            $this->_saveSessionURLStack(\@sessionURLstack);       
+         }	       
+
+         $currentIndex++;
+      }      
+      
+      if (($currentIndex == $maxURLsPerSession) && ($maxURLsPerSession > 0))
+      {
+         # 27 Sep 04
+         # if the session exits early because of the limit on number of transactions, then exit
+         # with an exit code indicating the threadID.
+         $this->_saveSessionURLStack(\@sessionURLstack);
+
+         $printLogger->print("end-of-session - exiting with threadID".$this->{'threadID'}."\n");
+         # exit and return the thread ID for restart
+         exit $this->{'threadID'};  
+      }
+   
+      $this->_saveSessionURLStack(\@sessionURLstack);
+      
+      # release this threadID - can't be continued as it's finished
+      $this->endRecoveryThread();
+      $printLogger->print("DocumentReader finished\n");
+   }
+
+   if ($dropTables)
+   {
+      $this->_dropTables();
+   }
+}
+
+# -------------------------------------------------------------------------------------------------
+# run
+# Main process for the document reader
+#
+# Purpose:
+# running document reader process
+
+# Parameters:
+#  bool createTables
+#  bool startSession
+#  bool continueSession
+#  bool dropTables
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  Nil
+#
+# Returns:
+#  Nil
+#    
+sub runTemp ( $ )
+{
+   my $this = shift;
+   my $command = shift;
+   my $createTables = 0;
+   my $startSession = 0;
+   my $continueSession = 0;
+   my $dropTables = 0;
+   
+   my $httpClient;
+   my $startURL = $this->{'baseURL'};       
+   my $parserHashRef = $this->{'parserHashRef'};
+   
+   my $content;
+   
+   my $index;
+   my $url;
+   my $nextURL;
+   my @sessionURLStack;
+   my @reversedArray;
+   my $nextTransaction;
+   
+   my $maxURLsPerSession;
+   my $currentIndex;
+   my $urlValid;
+   my $parserIndex;
+   
+   my $httpTransaction;
+   my $recoveryCookies = undef;
+   my $useRecoveryCookies = 0;
+   
+    # get the list of pattterns for which a parser has been defined      
+   my @parserPatternList = keys %$parserHashRef; 
+
+   # parse the command specified
+   if ($command =~ /start/i)
+   {
+      $startSession = 1;
+   }
+   else
+   {
+      if ($command =~ /continue/i)
+      {
+         $continueSession = 1;
+      }
+      else
+      {
+         if ($command =~ /create/i)
+         {
+            $createTables = 1;
+         }
+         else
+         {
+            if ($command =~ /drop/i)
+            {
+               $dropTables = 1;
+            }
+         }
+      }
+   }
+   
+   if ($createTables)
+   {
+      $this->_createTables();
+   }
+
+   # 25 July 2004 - start a new session in if continue is selected but a session doesn't exist
+   if ($continueSession)
+   {
+      if (defined $this->{'threadID'})
+      {
+       
+         # the threadID has been specified - continue that thread
+         # 26 Sept 04 - attempt to load the last session file and last cookie file for this session
+         @sessionURLstack = $this->_loadSessionURLStack(1);
+         $this->recoverCookies();
+         
+         $stackSize = @sessionURLstack;
+         if (($stackSize == 0) && ($continueSession))
+         {
+            # there's no session to continue - start a new session
+            $startSession = 1;
+         }
+      }
+   }
+
+   if ($startSession)
+   {
+      # 27 Sept 04 - initialise a new threadID - used for continuing multi-part session
+      $this->{'threadID'} = int(rand 128)+1;
+      $printLogger->print("--- starting new session - threadID=",$this->{'threadID'}, " ---\n");
+   
+      $httpClient = HTTPClient::new($this->{'instanceID'});      
+      $httpClient->setProxy($this->{'proxy'});
+      $httpClient->setUserAgent($DEFAULT_USER_AGENT);
+      $this->{'httpClient'} = $httpClient;      
+      $nextTransaction = HTTPTransaction::new($startURL, undef, $this->getGlobalParameter('source'));  # no referer - this is first request
+      
+      if ($httpClient->fetchDocument($nextTransaction, $startURL))
+      {
+         $newTransactionStack = $this->_parseDocument($nextTransaction, $httpClient);
+               
+         foreach (@$newTransactionStack)
+         {
+            push @sessionURLstack, $_;
+         }                                          
+      }
+      
+      # save the list in reverse so it can be handled as a stack (pop off one at a time)  
+      #@reversedArray = reverse @sessionURLstack;              
+      $this->_saveSessionURLStack(\@sessionURLstack);
+   
+      # start processing off the top of the stack
+      $continueSession = 1;
+   }
+   
+   if ($continueSession)
+   {   
+      $printLogger->print("--- threadID=", $this->{'threadID'}, " ---\n");
+      # get the URL stack remaining for the session
+      @sessionURLstack = $this->_loadSessionURLStack();    # load recovery point
+      
+      # KEEP THIS?  -  use existing httpClient if already created 
+      if (!$this->{'httpClient'})
+      {
+         $httpClient = HTTPClient::new($this->{'instanceID'});
+            
+         $httpClient->setProxy($this->{'proxy'});
+         $httpClient->setUserAgent($DEFAULT_USER_AGENT);
+         $this->{'httpClient'} = $httpClient;   
+      }
+         
+      $maxURLsPerSession = 0;
+      $currentIndex = 0;
+      $urlValid = 1;
+      my $newTransactionStack;
+      # 26 Sept 2004 - save the name of the current instance files, used for automatic recovery
+      $this->saveRecoverySessionName();
+
+      while ((($currentIndex < $maxURLsPerSession) || ($maxURLsPerSession == 0)) && ($urlValid))
+      {  
+         #$nextTransaction = pop @sessionURLstack;   
+         
+         # if the next URL is defined...
+         if ($nextTransaction)
+         {
+            #if ($httpClient->fetchDocument($nextTransaction, $startURL))
+            {
+               $newTransactionStack = $this->_parseDocument($nextTransaction, $httpClient);
+               
+               #foreach (@$newTransactionStack)
+               #{
+               #   push @sessionURLstack, $_;
+               #}
+               #push @sessionURLstack, $nextTransaction;
+               
+               # save the status of the session in case it needs to be continued later
+               #$this->_saveSessionURLStack(\@sessionURLstack);
+                  
+               # 26 Sept 2004 - If parser took too long, drop out (use for automatic restart after memory flush)
+               if ($this->{'lowMemoryError'})
+               {
+                  # exit and return the thread ID for restart
+                  $printLogger->print("end-of-session - exiting with threadID".$this->{'threadID'}."\n");
+                  exit $this->{'threadID'};
+               }
+               
+	            #$httpClient->back();
             }            
          } 
          else

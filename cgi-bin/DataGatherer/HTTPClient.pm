@@ -346,7 +346,7 @@ sub get()
    $header = $this->prepareRequestHeader($absoluteURL);
 
    
-   
+   #print "GET $absoluteURL\n";
    # prepare HTTP request...
    $request = HTTP::Request->new('GET', $absoluteURL, $header, undef);
    

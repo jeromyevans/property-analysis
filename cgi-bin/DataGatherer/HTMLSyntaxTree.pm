@@ -122,7 +122,10 @@ my ($currentInstance) = undef;
 # Contructor for the HTMLSyntaxTree - returns an instance of an HTMLSyntaxTree object
 # PUBLIC
 sub new
-{     
+{  
+
+   print "CREATING TREEBUILDER...\n";
+
    my $htmlSyntaxTree = {
 
       # list of all the elements in the HTMLSyntaxTree. Populated during parsing.
@@ -164,7 +167,8 @@ sub new
       frameListRef => undef,
       
       # 27Nov04: the original HTML content that generated this tree
-      content => undef
+      content => undef,
+      
    };  
    bless $htmlSyntaxTree;    # make it an object of this class
    
@@ -208,11 +212,10 @@ sub parseContent
 {
    my $this = shift;     # get this object's instance (always the first parameter)
    my $content = shift;  # get the content of the HTTP response
-   
-   my $treeBuilder = HTML::TreeBuilder->new();   
-   
+
+   my $treeBuilder = HTML::TreeBuilder->new();      
    $treeBuilder->parse($content);
-      
+   
    # the currentInstance is used by the callback function as the callback
    # isn't within this object instance 
    # TODO 22/2/04 this will cause problems under multithreading - instead need
@@ -245,12 +248,15 @@ sub parseContent
    #      $htmlForm->printForm();
    #   }
    #}
- 
+print "finished traversing.\n"; 
    # 27 November 2004
    # record the content in the HTMLSyntaxTree for later retrieval if desired - to support logging of
    # HTML within the database itself rather than relying only on the HTTPClient logging function 
    # (for better association)
    $this->{'content'} = $content;
+   
+   # 17 January 2004 - detroy the tree builder - it includes self-references that won't be garbage collected!
+   $treeBuilder->delete;   # destroy !!!
    
    return 1;
 }
@@ -261,6 +267,433 @@ sub parseContent
 # accepts an HTML::Element, boolean startFlag and a integer depth
 # PRIVATE
 sub _treeBuilder_callBack
+{
+   my $currentElement = shift;  # reference to HTML::Element, or just a string
+   my $startFlag = shift;    # true if entering an element
+   my $depth = shift;        # depth within the tree
+   my $isTag = 1;
+   my $traverseChildElements = 1;
+   my $href = undef;         # set for anchors
+   my $tagName;
+   my $textIndex;
+   
+   # TODO 22/2/04 this will cause problems under multithreading - instead need
+   # to create an instance of the callback for this object instance (this is sharing
+   # a global variable for this package)
+   my $this = $_currentInstance;
+
+   # first thing to do is query the reference to determine if this
+   # is a tag or text
+   if (!ref($currentElement))
+   {
+      # this isn't an element reference - it's actual text
+      $isTag = 0;      
+   }
+   
+   if ($isTag)
+   {
+      # this element is a tag...
+      #   record the tag name, a reference to the HTML::Element and the current index
+      #print "tag: ", $currentElement->tag(), "\n";
+      # special case handling:
+      # - if the element is a SCRIPT, do not proceed into it's children
+      if ($currentElement->tag() eq "script")
+      {
+         $traverseChildElements = 0;        # DO NOT traverse children
+      }
+      else
+      {
+         # special case handling:
+         # - if this is an anchor, add it to the anchor list index
+         # (only for the opening of the anchor, not the closing tag)
+         if ($currentElement->tag() eq "a")
+         {
+            if ($startFlag)
+            {
+               # also add this element to the anchor element index
+              $this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}]{'elementIndex'} = $this->{'elementListLength'};
+               # no text or image associated with this anchor yet...
+               $this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}]{'textListLength'} = 0;
+               $this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}]{'imgListLength'} = 0;                          
+            
+               $href = $currentElement->attr("href"); # used later
+             
+               $this->{'anchorElementIndexLength'}++;
+             
+               # the _insideAnchor flag is used for very basic tracking of the content
+               # of a tag.  When the flag is set, all text encountered up
+               # until the end of the tag is recording in the tag record
+               # to increase speed searching for an anchor via the text
+               # NOTE: NESTED TAGs will break this
+               $this->{'_insideAnchor'} = 1;
+               
+            }
+            else
+            {
+               # this is the end marker for a tag - clear the in tag flag
+               $this->{'_insideAnchor'} = 0;
+            }
+         }
+         else
+         {
+            # - if this is a table, add it to the table list index            
+            if (($currentElement->tag() eq "table") && ($startFlag))
+            {
+               if ($startFlag)
+               {                  
+                  # this is the start position for a new table
+                  #  add this element to the table element index
+                  $this->{'tableElementIndexRef'}[$this->{'tableElementIndexLength'}] = $this->{'elementListLength'};                          
+                                           
+                  $this->{'tableElementIndexLength'}++;
+               }              
+            }
+            
+            # - if this is a form, create a form attached to this syntax tree
+            if (($currentElement->tag() eq "form") && ($startFlag))
+            {
+               if ($startFlag)
+               {           
+                  # get the action attr for the target address
+                  $action = $currentElement->attr('action');                  
+                  $name = $currentElement->attr('name');
+                  
+                  #print "creating HTMLForm '$name'\n";
+                  
+                  $htmlForm = HTMLForm::new($name, $action);
+                  
+                  if ($method = $currentElement->attr('method'))
+                  {
+                     # check if the method is set to post
+                     if ($method =~ /POST/i)
+                     {
+                        $htmlForm->setMethod_POST();
+                     }
+                     else
+                     {
+                        $htmlForm->setMethod_GET();
+                     }
+                  } 
+                  else
+                  {
+                     $htmlForm->setMethod_GET();
+                  }
+                  
+                  # add the HTML form to the end of the form list
+                                                                                                                           
+                  # add the frame address to the list                     
+                  $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}] = $htmlForm;                   
+                  $this->{'htmlFormListLength'}++;                                                                                    
+                                                                                                                                                                                           
+               }              
+            }
+            
+            # if this is a form input, add it to the form attached to the
+            # syntax tree
+            if (($currentElement->tag() eq "input") && ($startFlag))
+            {               
+               if ($startFlag)
+               {   
+                  # check if the HTML form is defined            
+                  if ($this->{'htmlFormListRef'})                  
+                  {                 
+                     $type = $currentElement->attr('type');
+                     $value = $currentElement->attr('value');
+                     $name = $currentElement->attr('name');
+                     
+                     # if the type is only add it if it has a name...
+                     if ($type =~ /SUBMIT/i)
+                     {
+                        # if both a value and name have been defined for the submit button, then add it as a simple input
+                        # with value set
+                        if (($value) && ($name))
+                        {
+                           # only use if a value has been defined for the submit button
+                           $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addSimpleInput($name, $value, 1);
+                        }
+                        else
+                        {
+                           # if only the name is defined add it without the value set.  Otherwise it's ignored completely (not
+                           # used when submitting the form)
+                           if ($name)
+                           {
+                              $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addSimpleInput($name, undef, 0);
+                           }
+                        }                       
+                     }
+                     else
+                     {
+                        # if the type is reset ignore it (it's not submitted)
+                        if ($type =~ /RESET/i)
+                        {
+                           # ignored
+                        }
+                        else
+                        {
+                           # if the type is checkbox...
+                           if ($type =~ /CHECKBOX/i)
+                           {
+                              $checkboxSelected = $currentElement->attr('selected');
+                            
+                              $value = $currentElement->attr('value');
+      
+                              # note: the 'textValue' is the next text element in the tree, but isn't necessary defined
+                              # for the time being, it's ignored
+                              $textValue = "";
+                              
+                              # 11 July 2004 - add the checkbox to the list of checkboxes for the form
+                              $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addCheckbox($name, $value, $textValue, defined $checkboxSelected);
+                           }
+                           else
+                           {
+                              # if the type is image...
+                              if ($type =~ /IMAGE/i)
+                              {
+                                 # image needs special handling as the x and y offset of the
+                                 # click position.  Set the offset to (1,1)
+                                 # ensure the name is actually defined though
+                                 if ($name)
+                                 {
+                                    $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addSimpleInput($name.".x", '1', 1);
+                                    $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addSimpleInput($name.".y", '1', 1);
+                                 }
+                              }
+                              else
+                              {
+                                 # this is a simple input type - add it to the form if it has a name and/or value
+                                 if (($name) && ($value))
+                                 {
+                                    $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addSimpleInput($name, $value, 1);
+                                 }
+                                 else
+                                 {
+                                    if ($name)
+                                    {
+                                       $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addSimpleInput($name, undef, 0);
+                                    }
+                                 }
+                              }
+                           }
+                        }
+                     }
+                  }                                                                                                                       
+               }              
+            } # -end of input tag-
+            
+            # if this is a form selection, add it to the form attached to the
+            # syntax tree
+            if (($currentElement->tag() eq "select") && ($startFlag))
+            {               
+               if ($startFlag)
+               {           
+                  # check if the HTML form is defined                                    
+                  if ($this->{'htmlFormListRef'})                  
+                  {                                                                                         
+                     $name = $currentElement->attr('name');
+                     
+                     if ($name)
+                     {
+                        #print "adding selection '$name'...\n";
+                        $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addFormSelection($name);                     
+                     }
+                  }                                                                                                                       
+               }              
+            }
+            
+            # if this is a form option for a selection, add it to the form attached to the
+            # syntax tree
+            if (($currentElement->tag() eq "option") && ($startFlag))
+            {               
+               if ($startFlag)
+               {           
+                  # check if the HTML form is defined                                    
+                  if ($this->{'htmlFormListRef'})                  
+                  {    
+                     # if the value attribute is set, use this
+                     $value = $currentElement->attr('value');
+                                          
+                     # the next text element of this tag is the value                                                                                     
+                     $tagContent = $currentElement->content();
+                     $textValue = '';
+                     foreach (@$tagContent)
+                     {
+                        # check if this is a reference to a structure
+                        # (ie. a tag) or just text
+                        if (!ref($_))
+                        {
+                           #this is text
+                           $textValue = $_;
+                        }
+                     }
+                     
+                     $selected = $currentElement->attr('selected');
+                     
+                     if ($selected =~ /selected/i)
+                     {
+                        $isSelected = 1;
+                     }
+                     else
+                     {
+                        $isSelected = 0;
+                     }
+                      
+                     #print "   adding option '$value' isSelected='$isSelected'\n";                     
+                     $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addSelectionOption($value, $textValue, $isSelected);                                         
+                  }                                                                                                                       
+               }              
+            }
+            
+            # if this is a frame, add it to the frame list
+            if (($currentElement->tag() eq "frame") && ($startFlag))
+            {               
+               if ($startFlag)
+               {                     
+                  $frameListRef = $this->{'frameListRef'};        
+                                                      
+                  $source = $currentElement->attr('src');
+                     
+                  # add the frame address to the list                     
+                  $this->{'frameListRef'}[$this->{'frameListLength'}] = $source;                   
+                  $this->{'frameListLength'}++;                                                                                                                                                                                        
+               }              
+            }
+            
+            # if this is an image, check whether it's inside an anchor
+            if (($currentElement->tag() eq "img") && ($startFlag))
+            {     
+               # save the URL to the image for this tag                              
+               $href = $currentElement->attr("src"); # used later
+                                          
+               # if currently inside a tag, record this image element index against 
+               # the tag element
+               if ($this->{'_insideAnchor'})
+               {           
+                  # add this element to the anchor's text element list           
+                  $imgListLength = $this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}-1]{'imgListLength'};
+                  $this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}-1]{'imgListRef'}[$imgListLength] = $this->{'elementListLength'};
+           
+                  # and increase the length of the list of img elements associated with the anchor
+                  $this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}-1]{'imgListLength'}++;                                               
+               }                                                                                                                                                                                                                              
+            }
+         }
+      }         
+       
+      # if this is an end-tag, add the slash in front of it
+      if ($startFlag)
+      {
+         $tagName = $currentElement->tag();
+      }
+      else
+      {
+         $tagName = "/".$currentElement->tag();         
+      }
+      
+      # the a reference to the content of this tage                                                                                     
+      $tagContent = $currentElement->content();
+      
+      # record the tag information used for searching
+      $this->{'elementListRef'}[$this->{'elementListLength'}] = 
+      {   
+         type => $TAG,      
+         tag => $tagName,
+         elementRef => $currentElement, 
+         href => $href,
+         listIndex => $this->{'elementListLength'},
+         content => $tagContent
+      };                     
+   }
+   else
+   {
+      # this element is text...
+       
+      # replace non-text ASCII characters with white-space
+      # (character 0 to 31, 128 to 255)
+      #$currentElement =~ s/\W/ /g;
+      $currentElement =~ s/[\x80-\xff\x00-\x1f]/ /g;
+      
+      # --- remove leading and trailing whitespace ---
+      # substitute trailing whitespace characters with blank
+      # s/whitespace from end-of-line/all occurances
+      # s/\s*$//g;      
+      $currentElement =~ s/\s*$//g;
+
+      # substitute leading whitespace characters with blank
+      # s/whitespace from start-of-line,multiple single characters/blank/all occurances
+      #s/^\s*//g;    
+      $currentElemnt =~ s/^\s*//g;   
+      
+      # check if the element is non-blank (contains at least one non-whitespace character)
+      # TODO: This needs to be optimised - shouldn't have to do a substitution to 
+      # work out if the string contains non-blanks
+      $testForNonBlanks = $currentElement;
+      $testForNonBlanks =~ s/\s*//g;         
+      if ($testForNonBlanks)
+      {
+         # special check for presense of a comment - ignore it if it starts with the comment pattern
+         if ($currentElement =~ /\<\!\-\-/)
+         {
+            $textIndex = 0;
+         }
+         else
+         {
+           # only add non-blank text elements to the text index
+           $textIndex = $this->{'textElementIndexLength'};
+           
+           # also add this element to the text element index
+           $this->{'textElementIndexRef'}[$this->{'textElementIndexLength'}] = $this->{'elementListLength'};           
+           
+           $this->{'textElementIndexLength'}++;
+   
+           # if currently inside a tag, record this text element index against 
+           # the tag element
+           if ($this->{'_insideAnchor'})
+           {
+               
+              # also add this element to the anchor's text element list           
+              $textListLength = $this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}-1]{'textListLength'};
+              $this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}-1]{'textListRef'}[$textListLength] = $this->{'elementListLength'};
+              
+              # and increase the length of the list of text elements associated with the anchor
+              $this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}-1]{'textListLength'}++;
+              #print "_insideAnchor: adding text '$currentElement' (anchor ", $this->{'anchorElementIndexLength'}-1, "listLen=",$this->{'anchorElementIndexRef'}[$this->{'anchorElementIndexLength'}-1]{'textListLength'}, ")\n";
+           }
+         }
+      }
+      else
+      {
+         $textIndex = 0;
+      }
+      
+      #  record the text, a reference to the HTML::Element and the current index
+      # NOTE: the index in the textElementIndex is recorded to support jumping forward
+      # and backwards one text element at a time
+      $this->{'elementListRef'}[$this->{'elementListLength'}] = 
+      {   
+         type => $TEXT,      
+         tag => undef,
+         string => $currentElement,           
+         listIndex => $this->{'elementListLength'},
+         textElementIndex => $textIndex
+      };                   
+      
+   }    
+  
+   # count the number of elements encountered
+   $this->{'elementListLength'}++;
+   # increment the search end index so the first search is unconstrained
+   $this->{'searchEndIndex'}++;
+     
+   return $traverseChildElements;    
+}
+
+
+# -------------------------------------------------------------------------------------------------
+# call back function for the tree builder traverse operation.  This method is called once for
+# each element in HTML content
+# accepts an HTML::Element, boolean startFlag and a integer depth
+# PRIVATE
+sub _treeBuilder_callBack_BAK
 {
    my $currentElement = shift;  # reference to HTML::Element, or just a string
    my $startFlag = shift;    # true if entering an element
@@ -680,6 +1113,7 @@ sub _treeBuilder_callBack
      
    return $traverseChildElements;    
 }
+
 
 
 # -------------------------------------------------------------------------------------------------
@@ -2228,9 +2662,40 @@ sub getContent
 }
 
 # -------------------------------------------------------------------------------------------------
+
+# -------------------------------------------------------------------------------------------------
+# sub releaseMemory
+
+# releases the memory used by the treeBuilder - this is critical, otherwise it stays
+# allocated even after the htmlSyntaxTree is unused (the treeBuider seems to include 
+# references that remain valid as far as the garbage collector is concerned)
+# 
+# Purpose:
+#  Document parsing/logging
+#
+# Parameters:
+#  Nil
+#
+# Returns:
+#   STRING if content is defined (which it always should be), undef if not
+#
+ 
+sub releaseMemory
+
+{
+   my $this = shift; # get this object's instance (always the first parameter)      
+   $treeBuilder = $this->{'treeBuilder'};
+   $treeBuilder->delete;
+}
+
+
 # -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
 
+sub DESTORY
+{
+   print "HTMLSyntaxTree:destroy called ****************\n";
+}
 
 # -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------

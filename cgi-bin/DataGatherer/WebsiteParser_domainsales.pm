@@ -415,6 +415,104 @@ sub parseDomainSalesPropertyDetails
    
    my %saleProfiles;
    my $checksum;   
+   $printLogger->print("in parsePropertyDetails ()\n");
+   
+   
+   if ($htmlSyntaxTree->containsTextPattern("Property Details"))
+   {
+                                         
+      # parse the HTML Syntax tree to obtain the advertised sale information
+      %saleProfiles = extractDomainSaleProfile($documentReader, $htmlSyntaxTree, $url);                  
+      tidyRecord($sqlClient, \%saleProfiles);        # 27Nov04 - used to be called validateProfile
+      # calculate a checksum for the information - the checksum is used to approximately 
+      # identify the uniqueness of the data
+      $checksum = $documentReader->calculateChecksum(\%saleProfiles);
+
+      $printLogger->print("   parsePropertyDetails: extracted checksum = ", $checksum, ". Checking log...\n");
+             
+      if ($sqlClient->connect())
+      {		 	 
+         # check if the log already contains this checksum - if it does, assume the tuple already exists                  
+         if ($advertisedSaleProfiles->checkIfTupleExists($sourceName, $saleProfiles{'SourceID'}, $checksum, $saleProfiles{'AdvertisedPriceLower'}))
+         {
+            # this tuple has been previously extracted - it can be dropped
+            # record that it was encountered again
+            $printLogger->print("   parsePropertyDetails: identical record already encountered at $sourceName.\n");
+            #$advertisedSaleProfiles->addEncounterRecord($sourceName, $saleProfiles{'SourceID'}, $checksum);
+         }
+         else
+         {
+            $printLogger->print("   parsePropertyDetails: unique checksum/url - adding new record.\n");
+            # this tuple has never been extracted before - add it to the database
+            # 27Nov04 - addRecord returns the identifer (primaryKey) of the record created
+            $identifier = $advertisedSaleProfiles->addRecord($sourceName, \%saleProfiles, $url, $checksum, $instanceID, $transactionNo);
+            
+            if ($identifier >= 0)
+            {
+               # 27Nov04: save the HTML file entry that created this record
+               #$htmlIdentifier = $originatingHTML->addRecord($identifier, $url, $htmlSyntaxTree, "advertisedSaleProfiles");
+            }
+         }
+      }
+      else
+      {
+         $printLogger->print("   parsePropertyDetails:", $sqlClient->lastErrorMessage(), "\n");
+      }
+   }
+   else
+   {
+      $printLogger->print("   parsePropertyDetails:property details not found.\n");      
+   }
+   
+   
+   # return an empty list
+   return @emptyList;
+   
+}
+
+
+# -------------------------------------------------------------------------------------------------
+# parseDomainSalesPropertyDetailsBACKUP
+# parses the htmlsyntaxtree to extract advertised sale information and insert it into the database
+#
+# Purpose:
+#  construction of the repositories
+#
+# Parameters:
+#  DocumentReader
+#  HTMLSyntaxTree to use
+#  String URL
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  database
+#
+# Returns:
+#  a list of HTTP transactions or URL's.
+#    
+sub parseDomainSalesPropertyDetailsBACKUP
+
+{	
+   my $documentReader = shift;
+   my $htmlSyntaxTree = shift;
+   my $url = shift;
+   my $instanceID = shift;
+   my $transactionNo = shift;
+   my $threadID = shift; 
+   my $parentLabel = shift;
+   
+   my $sqlClient = $documentReader->getSQLClient();
+   my $tablesRef = $documentReader->getTableObjects();
+   my $printLogger = $documentReader->getGlobalParameter('printLogger');
+   my $sourceName = $documentReader->getGlobalParameter('source');
+
+   my $advertisedSaleProfiles = $$tablesRef{'advertisedSaleProfiles'};
+   my $originatingHTML = $$tablesRef{'originatingHTML'};  # 27Nov04
+   
+   my %saleProfiles;
+   my $checksum;   
    $printLogger->print("in parsePropertyDetails ($parentLabel)\n");
    
    
@@ -468,6 +566,7 @@ sub parseDomainSalesPropertyDetails
    # return an empty list
    return @emptyList;
 }
+
 
 # -------------------------------------------------------------------------------------------------
 

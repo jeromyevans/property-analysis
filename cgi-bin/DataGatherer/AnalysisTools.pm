@@ -29,6 +29,8 @@ my $DEFAULT_BEDROOMS_CONSTRAINT = "";
 my $DEFAULT_SALES_ANALYSIS_CONSTRAINT =  "(DateLastAdvertised > date_add(now(), interval -6 month)) and ";
 my $DEFAULT_LAST_ADVERTISED_CONSTRAINT = "(DateLastAdvertised > date_add(now(), interval -14 day)) and ";
 my $DEFAULT_RENTALS_ADVERTISED_CONSTRAINT = "((DateEntered > date_add(now(), interval -3 month)) or (LastEncountered > date_add(now(), interval -3 month))) and ";
+my $DEFAULT_RELATED_SALES_ADVERTISED_CONSTRAINT = "(DateLastAdvertised > date_add(now(), interval -3 month)) and ";
+
 
 my ($printLogger) = undef;
 # -------------------------------------------------------------------------------------------------
@@ -62,7 +64,9 @@ sub new
       bedroomsSearch => $DEFAULT_BEDROOMS_CONSTRAINT,
       dateSearch => $DEFAULT_SALES_ANALYSIS_CONSTRAINT,      
       date14daySearch => $DEFAULT_LAST_ADVERTISED_CONSTRAINT,
-      rentalsDateSearch => $DEFAULT_RENTALS_ADVERTISED_CONSTRAINT      
+      rentalsDateSearch => $DEFAULT_RENTALS_ADVERTISED_CONSTRAINT,
+      relatedSalesDateSearch => $DEFAULT_RELATED_SALES_ADVERTISED_CONSTRAINT      
+     
    };               
    
    bless $analysisTools;     
@@ -178,6 +182,129 @@ sub fetchAnalysisData
    $this->{'rentalResultsList'} = \@rentalResults;
 }
 
+# -------------------------------------------------------------------------------------------------
+
+# returns a value (enum) indicating the category of a property with the specified bedrooms and bathrooms
+# if the ideal category is statisticaly invalid (insufficient data) it chooses a better fit instead - that's 
+# why suburbname also has to be specified
+sub lookupBestFitCategory
+{
+   my $this = shift;
+   my $bedrooms = shift;
+   my $bathrooms = shift;
+   my $suburbName = shift;
+   my $categorySelected = 0;
+   
+   my $ALL = 0;
+   my $THREE_BY_ANY = 1;
+   my $THREE_BY_ONE = 2;
+   my $THREE_BY_TWO = 3;
+   my $FOUR_BY_ANY = 4;
+   my $FOUR_BY_ONE = 5;
+   my $FOUR_BY_TWO = 6;
+   my $FIVE_BY_ANY = 7;
+   my $NO_OF_CATEGORIES = 8;
+   
+   # determine the initial category - this would be used if there is sufficient statistical data
+   if ($bedrooms == 5)
+   {
+      $category = $FIVE_BY_ANY; 
+   }
+   else
+   {
+      if ($bedrooms == 4)
+      {
+         if ($bathrooms == 2)
+         {
+            $category = $FOUR_BY_TWO; 
+         }
+         elsif ($bathrooms == 1)
+         {
+            $category = $FOUR_BY_ONE;
+         }
+         else
+         {
+            $category = $FOUR_BY_ANY; 
+         }
+
+      }
+      elsif ($bedrooms == 3)
+      {
+         if ($bathrooms == 2)
+         {
+            $category = $THREE_BY_TWO; 
+         }
+         elsif ($bathrooms == 1)
+         {
+            $category = $THREE_BY_ONE; 
+         }
+         else
+         {
+            $category = $THREE_BY_ANY; 
+         }
+      }
+      else
+      {
+         $category = $ALL;
+         $categorySelected = 1;  # no improvements possible
+      }
+   }
+
+   # check if the suburb statistics are valid for this category - if not, choose a better fit
+   $initialCategory = $category;
+   while (!$categorySelected)
+   {   
+      # get the noOfRecords data for the suburb category
+      $noOfSalesHash = $this->getNoOfSalesHash($category);
+      $noOfRentalsHash = $this->getNoOfRentalsHash($category);
+     
+#      print "$suburbName:trialCategory = $category sales=", $$noOfSalesHash{$suburbName}, " rentals=", $$noOfRentalsHash{$suburbName}, "\n";
+
+      # check that it's 'statistically valid
+      if (($$noOfSalesHash{$suburbName} >= 5) && ($$noOfRentalsHash{$suburbName} >= 5))
+      {
+         # this category is fine to work with - exit the loop
+         $categorySelected = 1;
+      }
+      else
+      {
+         # insufficient data for this category - move to the parent category
+         if ($category == $ALL)
+         {
+            # nowhere else to go - use it
+            $categorySelected = 1;
+         }
+         elsif (($category == $THREE_BY_ANY) || ($category == $FOUR_BY_ANY) || ($category == $FIVE_BY_ANY))
+         {
+            # the parent is the all category - and nowhere else to go!
+            $category = $ALL;
+            $categorySelected = 1; 
+         }
+         elsif (($category == $THREE_BY_ONE) || ($category == $THREE_BY_TWO))
+         {
+            # try the three by any category
+            $category = $THREE_BY_ANY; 
+         }
+         elsif (($category == $FOUR_BY_ONE) || ($category == $FOR_BY_TWO))
+         {
+            # try the four by any category
+            $category = $FOUR_BY_ANY; 
+         }
+         else
+         {
+            # shouldnt' actually get here ever, but just in case, exist
+            $category = $ALL;
+            $categorySelected = 1;
+         }
+      }
+   }
+   
+#   print "$suburbname: $bedrooms x $bathrooms category=$category selected<br/>\n";
+   return $category;
+}
+
+# -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
 # Fetches data from the database using the search constraints and calculates analysis parameters
 sub calculateSalesAnalysis
@@ -297,7 +424,7 @@ sub calculateSalesAnalysis
             $advertisedPriceList[$FOUR_BY_TWO]{$suburbName}  = \@newList;  # initialise a new array
             my @newList;
             $advertisedPriceList[$FIVE_BY_ANY]{$suburbName}  = \@newList;  # initialise a new array
-            
+       
          }
          
          # add the advertised price to the totals for the suburb
@@ -336,7 +463,7 @@ sub calculateSalesAnalysis
             #print "   count this\n";
             $noOfCurrentlyAdvertised[$ALL]{$suburbName} += 1;
          }
-         
+                  
          if ($$_{'Bedrooms'} == 3)
          {
             $sumOfSalePrices[$THREE_BY_ANY]{$suburbName} += $advertisedPrice;
@@ -598,12 +725,6 @@ sub calculateSalesAnalysis
       }
    }
 
-
-   #DebugTools::printList("noOfAdvertised", \@noOfCurrentlyAdvertised);
-   #print "noOfAdvertised[0]=", $noOfCurrentlyAdvertised[0], "\n";
-   #$hashRef = $noOfCurrentlyAdvertised[0];
-   #DebugTools::printHash("noOfAdvertised[0]", $hashRef);
-   
    $this->{'noOfSalesCategoryHash'} = \@noOfAdvertisedSales;
    $this->{'minSalePriceCategoryHash'} = \@minSalePrice;
    $this->{'maxSalePriceCategoryHash'} = \@maxSalePrice;
@@ -611,8 +732,7 @@ sub calculateSalesAnalysis
    $this->{'salesMedianCategoryHash'} = \@salesMedian;
    $this->{'salesStdDevCategoryHash'} = \@salesStdDev;
    $this->{'noOfAdvertisedCategoryHash'} = \@noOfCurrentlyAdvertised;      
-
-}
+}   
 
 # -------------------------------------------------------------------------------------------------
 
@@ -844,51 +964,255 @@ sub calculateRentalAnalysis
 
 # -------------------------------------------------------------------------------------------------
 
+# calculate the cashflow performance for the suburbs.  This function depends on completion of the
+# sale and rental analysis first
+sub calculateCashflowAnalysis
+
+{
+   my $this = shift;
+    
+   my $ALL = 0;
+   my $THREE_BY_ANY = 1;
+   my $THREE_BY_ONE = 2;
+   my $THREE_BY_TWO = 3;
+   my $FOUR_BY_ANY = 4;
+   my $FOUR_BY_ONE = 5;
+   my $FOUR_BY_TWO = 6;
+   my $FIVE_BY_ANY = 7;
+   my $NO_OF_CATEGORIES = 8;
+  
+   my @cashflowMedian;      # array of hashes
+ 
+   my $propertiesListRef =  $this->{'salesResultsList'};
+  
+   # now loop through all the PROPERTIES, this time to estimate the median cashflow
+   # this is done in a separate loop because the arrays calculated previously are required
+  
+   # loop through the very large array of properties
+   foreach (@$propertiesListRef)
+   {
+      $suburbName = $$_{'SuburbName'};
+   
+      # if a buyer enquiry range is specified, take 2/3rds of the range as the price.
+      if (defined $$_{'AdvertisedPriceUpper'} && ($$_{'AdvertisedPriceUpper'}) > 0)
+      {
+         $distance = $$_{'AdvertisedPriceUpper'} - $$_{'AdvertisedPriceLower'};
+         $advertisedPrice = $$_{'AdvertisedPriceLower'} + ($distance * 2 / 3)
+      }
+      else
+      {
+         $advertisedPrice = $$_{'AdvertisedPriceLower'};  
+      }              
+   
+      if ($advertisedPrice > 0)
+      {
+         
+         # for each first occurance of a suburbname, initialise a new list of cashflows
+         if (!defined $weeklyCashflowList[$ALL]{$suburbName})
+         {
+            for ($category = 0; $category < $NO_OF_CATEGORIES; $category++)
+            {
+               # initialise counters for the first time for this suburbname
+               my @newList;
+               $weeklyCashflowList[$category]{$suburbName} = \@newList;  # initialise a new array
+            }
+         }
+         
+         # --- cashflow analysis ---
+         
+         # estimate the rent for the property
+         ($estimatedRent, $estimatedYield) = $this->estimateRent($advertisedPrice, $_);
+         $infoHashRef = $this->estimateWeeklyCashflow($advertisedPrice, $estimatedRent, $_);
+         $estimatedCashflow = $$infoHashRef{'weeklyCashflow'};
+   
+         #print "$suburbName: $advertisedPrice, ER=$estimatedRent, EC=$estimatedCashflow\n";           
+         
+         # now allocated the estimated cashflow to each applicable category - loop through 
+         # all the defined categories and check their suitability
+         for ($category = 0; $category < $NO_OF_CATEGORIES; $category++)
+         {
+            # acertain if this category is applicable for this property
+            $useThisCategory = 0;
+            if ($category == $ALL)
+            {
+               $useThisCategory = 1;
+            }
+            else
+            {
+               if ($$_{'Bedrooms'} == 3)
+               {
+                  if ($category == $THREE_BY_ANY)
+                  {
+                     $useThisCategory = 1;               
+                  }
+                  else
+                  {
+                     if (($category == $THREE_BY_ONE) && ($$_{'Bathrooms'} == 1))
+                     {
+                        $useThisCategory = 1;               
+                     }
+                     else
+                     {
+                        if (($category == $THREE_BY_TWO) && ($$_{'Bathrooms'} == 2))
+                        {
+                           $useThisCategory = 1;               
+                        }
+                     }
+                  }
+               }
+               else
+               {
+                  if ($$_{'Bedrooms'} == 4)
+                  {
+                     if ($category == $FOUR_BY_ANY)
+                     {
+                        $useThisCategory = 1;               
+                     }
+                     else
+                     {
+                        if (($category == $FOUR_BY_ONE) && ($$_{'Bathrooms'} == 1))
+                        {
+                           $useThisCategory = 1;               
+                        }
+                        else
+                        {
+                           if (($category == $FOUR_BY_TWO) && ($$_{'Bathrooms'} == 2))
+                           {
+                              $useThisCategory = 1;               
+                           }
+                        }
+                     }
+                  }
+                  else
+                  {
+                     if ($$_{'Bedrooms'} == 5)
+                     {
+                        if ($category == $FIVE_BY_ANY)
+                        {
+                           $useThisCategory = 1;               
+                        }
+                     }  
+                  }
+               }
+            }
+
+            # this category is appicable for this property - add the cashflow it its list for calculating
+            # the median later
+            if ($useThisCategory)
+            {
+               # push this cashflow onto the list for this suburb and category - it's used to calculate the median later
+               $listRef = $weeklyCashflowList[$category]{$suburbName};
+               push @$listRef, $estimatedCashflow;
+               #DebugTools::printList("$suburbName", \@listRef);
+            }
+         }  
+      }
+   }
+   
+   # now calculate the median cashflow for the suburb
+   $hashRef = $this->getNoOfSalesHash($ALL);
+   foreach (keys %$hashRef)
+   {
+      $suburbName = $_;
+      #print "$suburbName\n";
+      # loop for all the different categories
+      for ($propertyType = 0; $propertyType < $NO_OF_CATEGORIES; $propertyType++)
+      {
+         $listRef = $weeklyCashflowList[$propertyType]{$suburbName};
+         
+         #DebugTools::printList("$suburbName:listRef[$propertyType]", $listRef);
+         
+         @priceList = sort { $a <=> $b } @$listRef;   # sort numerically
+         
+         
+    #     DebugTools::printList("CASHFLOW($suburbName)", \@priceList);
+         
+         
+         $listLength = @priceList;
+         #if ($_ eq "Cable Beach")
+         #{
+         #   print "listLength{$_} = $listLength (";
+         #}
+         if (($listLength % 2) == 0)
+         {
+            # if the list length is even...find the middle pair of numbers and take the centre of those
+            $medianLower = $priceList[($listLength / 2)-1];
+            $medianUpper = $priceList[$listLength / 2];
+            #if ($_ eq "Cable Beach")
+            #{
+            #   print "lower=$medianLower, upper=$medianUpper\n";
+            #}
+            $medianPrice = $medianLower + ($medianUpper - $medianLower) / 2;
+         }
+         else
+         {
+            # the list length is odd, so the median value is the one in the middle
+            $medianPrice = $priceList[$listLength / 2];
+         }
+         
+         $cashflowMedian[$propertyType]{$suburbName} = $medianPrice;
+      }
+   }
+   
+   #DebugTools::printList("noOfAdvertised", \@noOfCurrentlyAdvertised);
+   #print "noOfAdvertised[0]=", $noOfCurrentlyAdvertised[0], "\n";
+   #$hashRef = $cashflowMedian[0];
+   #DebugTools::printHash("cashflowMedian[0]", $hashRef);
+   
+   $this->{'medianCashflowCategoryHash'} = \@cashflowMedian;      
+}
+
+# -------------------------------------------------------------------------------------------------
+
 sub calculateYield
 {
    my $this = shift;   
+   my $NO_OF_CATEGORIES = 8;
    my $noOfSalesListRef = $this->{'noOfSalesCategoryHash'};
    my $noOfRentalsListRef = $this->{'noOfRentalsCategoryHash'};
    my $rentalMedianListRef = $this->{'rentalMedianCategoryHash'};
    my $salesMedianListRef= $this->{'salesMedianCategoryHash'};
-   my %medianYield;
-   
-   $noOfSales = $$noOfSalesListRef[0];
-   $salesMedian = $$salesMedianListRef[0];
-   $noOfRentals = $$noOfRentalsListRef[0];
-   $rentalMedian = $$rentalMedianListRef[0];
-   # loop through all the suburbs again to calculate the yield   
-   foreach (keys %$noOfSales)
-   {               
+   my @medianYield;
       
-      ($officialSalesMedian{$_}, $officialRentalMedian{$_}) = $this->fetchOfficialMedians($_);
- 
-      #if (($$noOfRentals{$_} > 0) && ($$noOfSales{$_} > 0))
-      if (($$noOfRentals{$_} > 0) && ($$noOfSales{$_} > 0))
-      {                         
-         #$meanYield{$_} = ($$rentalMean{$_} * 5200) / $$salesMean{$_};
-         if ($$salesMedian{$_} > 0)
-         {
-            $medianYield{$_} = ($$rentalMedian{$_} * 5200) / $$salesMedian{$_};
-         }
+                
+   for ($category = 0; $category < $NO_OF_CATEGORIES; $category++)
+   {
+      $noOfSales = $$noOfSalesListRef[$category];
+      $salesMedian = $$salesMedianListRef[$category];
+      $noOfRentals = $$noOfRentalsListRef[$category];
+      $rentalMedian = $$rentalMedianListRef[$category];
+    
+      # loop through all the suburbs again to calculate the yield   
+      foreach (keys %$noOfSales)
+      {  
+         #($officialSalesMedian{$_}, $officialRentalMedian{$_}) = $this->fetchOfficialMedians($_);
+    
+         #if (($$noOfRentals{$_} > 0) && ($$noOfSales{$_} > 0))
+         if (($$noOfRentals{$_} > 0) && ($$noOfSales{$_} > 0))
+         {                         
+            #$meanYield{$_} = ($$rentalMean{$_} * 5200) / $$salesMean{$_};
+            if ($$salesMedian{$_} > 0)
+            {
+               $medianYield[$category]{$_} = ($$rentalMedian{$_} * 5200) / $$salesMedian{$_};
+            }
+            else
+            {
+               $medianYield[$category]{$_} = 0;
+            }
+            #print "$_ ", $$salesMedian{$_}, " ", $$rentalMedian{$_}, " ", $medianYield{$_}, "\n";
+   
+         }      
          else
-         {
-            $medianYield{$_} = 0;
-         }
-         #print "$_ ", $$salesMedian{$_}, " ", $$rentalMedian{$_}, " ", $medianYield{$_}, "\n";
-
-      }      
-      else
-      {         
-         $medianYield{$_} = 0;
-      }               
+         {         
+            $medianYield[$category]{$_} = 0;
+         }               
+      }
    }
  
   
-   $this->{'medianYieldHash'} = \%medianYield;
-   $this->{'officialSalesMedian'} = \%officialSalesMedian;
-   $this->{'officialRentalMedian'} = \%officialRentalMedian;
-   
+   $this->{'medianYieldCategoryHash'} = \@medianYield;
+   #$this->{'officialSalesMedian'} = \%officialSalesMedian;
+   #$this->{'officialRentalMedian'} = \%officialRentalMedian;
 }
 
 # ------------------------------------------------------------------------------------------------- 
@@ -979,6 +1303,19 @@ sub getSalesStdDevHash
 
 
 # ------------------------------------------------------------------------------------------------- 
+# returns the hash of cashflow median 
+sub getCashflowMedianHash
+{
+   my $this = shift;   
+   my $category = shift;
+
+   $listRef = $this->{'medianCashflowCategoryHash'};
+ #  print "smelistRef[$category]=", $$listRef[$category], "\n";
+   return $$listRef[$category];
+}
+
+
+# ------------------------------------------------------------------------------------------------- 
 # returns the hash of number of retnals
 sub getNoOfRentalsHash
 {
@@ -1058,8 +1395,11 @@ sub getRentalStdDevHash
 sub getMedianYieldHash
 {
    my $this = shift;   
-   
-   return $this->{'medianYieldHash'};
+   my $category = shift;
+
+   $listRef = $this->{'medianYieldCategoryHash'};
+   #print "smilistRef[$category]=", $$listRef[$category], "\n";
+   return $$listRef[$category];
 }
 
 # ------------------------------------------------------------------------------------------------- 
@@ -1070,7 +1410,7 @@ sub getSalesDataList
    my $this = shift;   
    my $sqlClient = $this->{'sqlClient'};   
    
-   $salesSelectCommand = "select StreetNumber, Street, SuburbName, AdvertisedPriceLower, AdvertisedPriceUpper, Bedrooms, Bathrooms from MasterPropertyTable where ".$this->{'date14daySearch'}." state='WA' and ".$this->{'suburbSearch'}." ".$this->{'typeSearch'}." ".$this->{'bedroomsSearch'}." ".$this->{'bathroomsSearch'}." order by SuburbName, Street, StreetNumber";
+   $salesSelectCommand = "select DateLastAdvertised, unix_timestamp(DateLastAdvertised) as UnixTimeStamp, StreetNumber, Street, SuburbName, AdvertisedPriceLower, AdvertisedPriceUpper, Bedrooms, Bathrooms, YearBuilt from MasterPropertyTable where ".$this->{'date14daySearch'}." state='WA' and ".$this->{'suburbSearch'}." ".$this->{'typeSearch'}." ".$this->{'bedroomsSearch'}." ".$this->{'bathroomsSearch'}." order by SuburbName, Street, StreetNumber";
    print "<br/>", "<tt>SALES  :$salesSelectCommand</tt><br/>";
    my @salesResults = $sqlClient->doSQLSelect($salesSelectCommand);
    
@@ -1079,13 +1419,29 @@ sub getSalesDataList
 }
 
 # ------------------------------------------------------------------------------------------------- 
+# returns the list of hashes of sales data used in the analysis
+sub getRelatedSalesDataList
+{
+   my $this = shift;   
+   my $sqlClient = $this->{'sqlClient'};   
+   
+   $salesSelectCommand = "select DateLastAdvertised, unix_timestamp(DateLastAdvertised) as UnixTimeStamp, StreetNumber, Street, SuburbName, AdvertisedPriceLower, AdvertisedPriceUpper, Bedrooms, Bathrooms, YearBuilt from MasterPropertyTable where ".$this->{'relatedSalesDateSearch'}." state='WA' and ".$this->{'suburbSearch'}." ".$this->{'typeSearch'}." ".$this->{'bedroomsSearch'}." ".$this->{'bathroomsSearch'}." order by SuburbName, Street, StreetNumber";
+   print "<br/>", "<tt>RELATEDSALES  :$salesSelectCommand</tt><br/>";
+   my @salesResults = $sqlClient->doSQLSelect($salesSelectCommand);
+   
+   
+   return \@salesResults;
+}
+
+
+# ------------------------------------------------------------------------------------------------- 
 # returns the list of hashes of rental data used in the analysis
 sub getRentalDataList
 {
    my $this = shift;   
    
    my $sqlClient = $this->{'sqlClient'};      
-   $rentalsSelectCommand = "select DateEntered, LastEncountered, StreetNumber, Street, SuburbName, AdvertisedWeeklyRent, Bedrooms, Bathrooms from WorkingView_AdvertisedRentalProfiles where ".$this->{'rentalsDateSearch'}." state='WA' and ".$this->{'suburbSearch'}." ".$this->{'typeSearch'}." ".$this->{'bedroomsSearch'}." ".$this->{'bathroomsSearch'}." order by SuburbName, DateEntered desc, Street, StreetNumber";
+   $rentalsSelectCommand = "select greatest(unix_timestamp(DateEntered), unix_timestamp(LastEncountered)) as LastSeen, StreetNumber, Street, SuburbName, AdvertisedWeeklyRent, Bedrooms, Bathrooms from WorkingView_AdvertisedRentalProfiles where AdvertisedWeeklyRent > 0 and ".$this->{'rentalsDateSearch'}." state='WA' and ".$this->{'suburbSearch'}." ".$this->{'typeSearch'}." ".$this->{'bedroomsSearch'}." ".$this->{'bathroomsSearch'}." order by SuburbName, LastSeen desc, AdvertisedWeeklyRent, Street, StreetNumber";
    print "<br/>", "<tt>RENTALS:$rentalsSelectCommand</tt><br/>";
 
    my @rentalResults = $sqlClient->doSQLSelect($rentalsSelectCommand);
@@ -1410,7 +1766,8 @@ sub estimateWeeklyCashflow
    my $this = shift;
    my $estimatedPrice = shift;
    my $estimatedRent = shift;
-   
+   my $propertyDataHashRef = shift;
+
    $purchaseCosts = $this->estimatePurchaseCosts($estimatedPrice);
    $apportionedMortgageFees = $this->estimateMortgageCosts($estimatedPrice, $purchaseCosts);
    
@@ -1453,6 +1810,7 @@ sub estimateWeeklyCashflow
 #DebugTools::printHash("annualExpenses", $annualExpenses);
 #}
    my %infoHash;
+   $infoHash{'estimatedRent'} = $estimatedRent;
    $infoHash{'purchaseCosts'} = $$purchaseCosts{'totalPurchaseFees'};
    $infoHash{'mortgageCosts'} = $$purchaseCosts{'totalMortgageFees'};
    $infoHash{'annualIncome'} = $$annualIncome{'annualIncome'};
@@ -1464,4 +1822,62 @@ sub estimateWeeklyCashflow
 }
 
 # -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+# estimate the rent for a particular property using the current analysis parameters
+sub estimateRent
+
+{      
+   my $this = shift;
+   my $housePrice = shift;
+   my $propertyDataHashRef = shift;
+   
+   my %salesMean;
+   my %salesStdDev;
+   my %rentalStdDev;
+   my %rentalMean;                         
+ 
+   $suburbName = $$propertyDataHashRef{'SuburbName'};       
+   #($officialSalesMean, $officialRentalMean) = $analysisTools->fetchOfficialMedians($suburbName);
+   
+   $category = $this->lookupBestFitCategory($$propertyDataHashRef{'Bedrooms'}, $$propertyDataHashRef{'Bathrooms'}, $$propertyDataHashRef{'SuburbName'});
+   
+   # get statistical data for the category
+   $salesMean = $this->getSalesMeanHash($category);
+   $salesStdDev = $this->getSalesStdDevHash($category);
+   $rentalMean = $this->getRentalMeanHash($category);
+   $rentalStdDev = $this->getRentalStdDevHash($category);
+#DebugTools::printHash("rm", $rentalMean);
+#DebugTools::printHash("rstdv", $rentalStdDev);
+
+   if ($housePrice > 0)
+   {
+      $delta = $housePrice - $$salesMean{$suburbName};
+      #$delta = $housePrice - $officialSalesMean;
+           
+      if ($$salesStdDev{$suburbName} > 0)
+      {
+         $ratio = $delta / $$salesStdDev{$suburbName};                 
+      }
+      else
+      {      
+         $ratio = 0;         
+      }
+ 
+      if ($$rentalStdDev{$suburbName} > 0)
+      {
+         $estimatedRent = ($ratio * $$rentalStdDev{$suburbName}) + $$rentalMean{$suburbName};
+         #$estimatedRent = ($ratio * $$rentalStdDev{$suburbName}) + $officialRentalMean;         
+         # round down to the nearest $10.
+         $estimatedRent = int($estimatedRent / 10) * 10;         
+      }
+      else
+      {
+         $estimatedRent = 0;
+      }              
+      
+      $estimatedYield = ($estimatedRent * 5200) /  $housePrice;  
+   }       
+ 
+   return ($estimatedRent, $estimatedYield);
+}
 
