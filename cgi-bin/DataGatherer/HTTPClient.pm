@@ -27,6 +27,8 @@
 #  31 Oct 20004 - added fetchDocument as a means to use a httpTransaction to get a document.  Previously it was upto the module
 #    using this to determine which method to use
 # 19 Feb 2005 - hardcoded absolute log directory temporarily
+#  2 Apr 2005 - added function to specify printLogger to use if desired (off by default)
+#
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -77,7 +79,8 @@ sub new ($)
       cookieJarRef => undef,
       absoluteURL => undef,
       method => undef,
-      httpTransaction => undef
+      httpTransaction => undef,
+      printLogger => undef
    };  
    bless $httpClient;    # make it an object of this class      
    
@@ -136,6 +139,33 @@ sub setUserAgent
    $userAgent = shift;
    
    $this->{'agentName'} = $userAgent;
+}
+
+
+# -------------------------------------------------------------------------------------------------
+# setPrintLogger
+# specifies a print logger to use for debug info
+# 
+# Purpose:
+#  Setting up a printlogger for debugging
+#
+# Parameters:
+#  PrintLogger reference
+#
+#  
+#
+# Updates:
+#  this->{'printLogger'}
+#
+# Returns:
+#   Nil
+#
+sub setPrintLogger
+{
+   $this = shift;
+   $printLogger = shift;
+   
+   $this->{'printLogger'} = $printLogger;
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -815,17 +845,22 @@ sub fetchDocument
    my $url;
    my $postParameters;
    my $processResponse = 0;
+   my $printLogger = $this->{'printLogger'};
                         
    if ($nextTransaction->methodIsGet())
    {      
       $url = new URI::URL($nextTransaction->getURL(), $startURL)->abs()->as_string();
-      
-#      ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
-#      $year += 1900;
-#      $mon++;      
-      
-#      $displayStr = sprintf("%02d:%02d:%02d  GET: %s\n", $hour, $min, $sec, $url);     
-#      $printLogger->print($displayStr);     
+
+      # display debug info if enabled      
+      if ($printLogger)
+      {
+         ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
+         $year += 1900;
+         $mon++;      
+         
+         $displayStr = sprintf("%02d:%02d:%02d  GET: %s\n", $hour, $min, $sec, $url);     
+         $printLogger->print($displayStr); 
+      }
       
       $this->setReferer($nextTransaction->getReferer());
       
@@ -850,12 +885,17 @@ sub fetchDocument
       {                                  
          $url = new URI::URL($nextTransaction->getURL(), $startURL)->abs()->as_string();    
          
-#         ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
-#         $year += 1900;
-#         $mon++;      
          
-#         $displayStr = sprintf("%02d:%02d:%02d POST: %s\n", $hour, $min, $sec, $url);   
-#         $printLogger->print($displayStr);     
+         # display debug info if enabled      
+         if ($printLogger)
+         {
+            ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
+            $year += 1900;
+            $mon++;      
+            
+            $displayStr = sprintf("%02d:%02d:%02d POST: %s\n", $hour, $min, $sec, $url);   
+            $printLogger->print($displayStr);
+         }
                            
          $escapedParameters = $nextTransaction->getEscapedParameters();
          

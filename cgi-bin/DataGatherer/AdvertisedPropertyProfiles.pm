@@ -31,6 +31,8 @@
 #     for the cache comparisons
 #                    - changed checkIfTupleExists to operate on the CacheView for query speed improvement
 #   5 December 2004 - adapted to support both sales and rentals instead of two separete files with duplicated code
+#   2 April 2005 - updated all insert functions to use $sqlClient->lastInsertID(); to get the identifier of the
+#    last record inserted instead of performing a select function to find out.  This is MUCH faster.
 #
 # CONVENTIONS
 # _ indicates a private variable or method
@@ -355,30 +357,32 @@ sub addRecord
       $statementText = $statementText.$appendString . ")";
       
       #print "statement = ", $statementText, "\n";
-      
       $statement = $sqlClient->prepareStatement($statementText);
       
       if ($sqlClient->executeStatement($statement))
       {
          $success = 1;
          
-         # 27Nov04 - get the identifier (primaryKey) of the record just created and return it
-         # note the most recent DateEntered can't be used reliably (if recovering from logs, or if multiple processes running)
-         # instead we use: the parameters defining this instance
-         $sqlStatement = "select identifier from $tableName where sourceName=$quotedSource and sourceURL=$quotedUrl and checksum=$checksum and instanceID = $quotedInstance and transactionNo = $transactionNo order by DateEntered";
-         @selectResults = $sqlClient->doSQLSelect($sqlStatement);
-        
-         # only one result should be returned - if there's more than one, then we have a problem, to avoid it always take
-         # the most recent entry which is the last in the list due to the 'order by' command
-         $lastRecordHashRef = $selectResults[$#selectResults];
-         $identifier = $$lastRecordHashRef{'identifier'};
+         # 2 April 2005 - use lastInsertID to get the primary key identifier of the record just inserted
+         $identifier = $sqlClient->lastInsertID();
+         
+         # --- Deprecated code ---
+            # 27Nov04 - get the identifier (primaryKey) of the record just created and return it
+            # note the most recent DateEntered can't be used reliably (if recovering from logs, or if multiple processes running)
+            # instead we use: the parameters defining this instance
+         #   $sqlStatement = "select identifier from $tableName where sourceName=$quotedSource and sourceURL=$quotedUrl and checksum=$checksum and instanceID = $quotedInstance and transactionNo = $transactionNo order by DateEntered";
+         #   @selectResults = $sqlClient->doSQLSelect($sqlStatement);
+           
+            # only one result should be returned - if there's more than one, then we have a problem, to avoid it always take
+            # the most recent entry which is the last in the list due to the 'order by' command
+         #   $lastRecordHashRef = $selectResults[$#selectResults];
+         #   $identifier = $$lastRecordHashRef{'identifier'};
          
          # --- add the new record to the cache and working view ---
          if ($identifier)
          {
             $this->_cacheView_addRecord($identifier, $sourceName, $parametersRef, $checksum);
             $this->_workingView_addRecord($identifier);
-            
          }
       }
    }

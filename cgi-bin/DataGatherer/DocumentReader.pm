@@ -58,7 +58,7 @@
 #   to memory leak error that's mainly now avoided.  On initial runs because of the size of the database the parser
 #   ran take a long time.
 #              19 Feb 2005 - hardcoded absolute log directory temporarily
-#
+#               2 Apr 2005 - added support for setting printLogger for HTTPClient (debug info)
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -794,6 +794,7 @@ sub run ( $ )
       $httpClient = HTTPClient::new($this->{'instanceID'});      
       $httpClient->setProxy($this->{'proxy'});
       $httpClient->setUserAgent($DEFAULT_USER_AGENT);
+      $httpClient->setPrintLogger($printLogger);
       $this->{'httpClient'} = $httpClient;      
       $nextTransaction = HTTPTransaction::new($startURL, undef, $this->getGlobalParameter('source'));  # no referer - this is first request
       
@@ -819,6 +820,7 @@ sub run ( $ )
             
       $httpClient->setProxy($this->{'proxy'});
       $httpClient->setUserAgent($DEFAULT_USER_AGENT);
+      $httpClient->setPrintLogger($printLogger);
       $this->{'httpClient'} = $httpClient;   
       
       $maxURLsPerSession = 0;
@@ -836,10 +838,10 @@ sub run ( $ )
             {
                # parse the document...
                @newTransactionStack = $this->_parseDocument($nextTransaction, $httpClient);
-               
+         
                # 23Jan05 - let the database manage the transaction stack for the thread
                $sessionURLStack->pushTransactionList($this->{'threadID'}, \@newTransactionStack);
-                  
+                 
                # 26 Sept 2004 - If parser took too long, drop out (use for automatic restart after memory flush)
                if ($this->{'lowMemoryError'})
                {

@@ -18,6 +18,11 @@
 #  8 Dec 2004  - modified quote to return 'null' for undef variables instead of the default of '';
 # 11 Jan 2005  - BUGFIX - fixed quote so that variables that are SUPPOSED to be 0 are not set to null
 # 19 Feb 2005 - hardcoded absolute log directory temporarily
+#  2 Apr 2005 - upgraded to use latest version of DBI so the last_insert_id function can be used
+#                  Currently using V1.43 DBI, and 2.9004 DBD::mysql
+#               but last_insert_id doesn't appear to be defined, so now using $dbiHandle->{'mysql_insertid'}; 
+#               to get the last autonum (this limits the database to mysql only)
+#
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -627,3 +632,36 @@ sub alterForeignKey
    return $success;   
 }
 
+
+# -------------------------------------------------------------------------------------------------
+# lastInsertID
+# returns the last insert ID after an INSERT that included an AUTO_INCREMENT or SERIAL field
+# 
+# Purpose:
+#  Database access
+#
+# Parameters:
+#  Nil
+#
+# Updates:
+#
+# Returns:
+#   integer or undef
+#
+sub lastInsertID
+
+{
+   my $this = shift; 
+   my $dbiHandle;
+   my $lastInsertID = undef;
+   
+   $dbiHandle = $this->{'dbiHandle'};   
+   
+   if ($dbiHandle)
+   {      
+       $lastInsertID = $dbiHandle->{'mysql_insertid'}; 
+      # $lastInsertID = $dbiHandle->last_insert_id(undef, undef, undef, undef);  # last_insert_id doesn't exist in driver!
+   }
+   
+   return $lastInsertID;   
+}
