@@ -14,7 +14,13 @@
 #
 # CURRENT PROBLEM IS THAT IF IT BOMBS OUT within a region it goes back to the start
 # of that region for some reason and doesn't seem to recover.  It's related to the
-# sesison file. 
+# sesison file.
+# CHANGE TO BE COMPLETELY THREAD BASED BY REGION so a new session and cookie set generated
+#  by the domain server 
+#
+# 26 Oct 04 - significant re-architecting to return to the base page and clear cookies after processing each
+#  region - the theory is that it will allow NSW to be completely processed without stuffing up the 
+#  session on domain server.
 
 use PrintLogger;
 use CGI qw(:standard);
@@ -381,6 +387,10 @@ sub parseDomainSalesPropertyDetails
 }
 
 # -------------------------------------------------------------------------------------------------
+
+# global variable used for display purposes - indicates the current region being processed
+my $currentRegion = 'Nil';
+
 # -------------------------------------------------------------------------------------------------
 # parseDomainSalesChooseSuburbs
 # parses the htmlsyntaxtree to post form information to select suburbs
@@ -409,6 +419,7 @@ sub parseDomainSalesChooseSuburbs
    my $url = shift;
    my $instanceID = shift;
    my $transactionNo = shift;
+   my $threadID = shift;
    
    my $htmlForm;
    my $actionURL;
@@ -489,28 +500,7 @@ sub parseDomainSalesChooseSuburbs
                   if ($acceptSuburb)
                   {         
                      
-                     # 2 Aug 04 - I don't understand why this was necessary, but if the default post parameters
-                     # hash was copied directly then 1Mb of memory per transaction is allocated.  Copying it 
-                     # manually like this only allocates scalars.  Strange.
-                     # create a duplicate of the default post parameters
-#                     my @newPostParameters;
-#print "STROP STOP STOP STOP STOP STOP STO PSTOP STOP STOP STOP \n";                         
-                     # and set the value to this option in the selection
- #                    $newPostParameters{'__VIEWSTATE'} = $defaultPostParameters{'__VIEWSTATE'};
- #                    $newPostParameters{'_ctl0:listboxSuburbs'} = $_->{'value'};
- #                    $newPostParameters{'_ctl0:dropPriceFromSale'}=$defaultPostParameters{'_ctl0:dropPriceFromSale'};
- #                    $newPostParameters{'_ctl0:dropPriceToSale'}=$defaultPostParameters{'_ctl0:dropPriceToSale'};
- #                    $newPostParameters{'_ctl0:txtKeywords'}=$defaultPostParameters{'_ctl0:txtKeywords'};
- #                    $newPostParameters{'_ctl0:imgbtnSearch'}=$defaultPostParameters{'_ctl0:imgbtnSearch'};
-                     # next parameter is used internally only to keep original order of parameters.
- #                    $newPostParameters{'_internalPOSTOrder_'}=$defaultPostParameters{'_internalPOSTOrder_'};
-                     $htmlForm->setInputValue('_ctl0:listboxSuburbs', $_->{'value'});
-
-                     #DebugTools::printHash("newPost", \%newPostParameters);
-                     #print "actionURL= $actionURL\n";
-                     #print "url=$url\n";
-         #print "   parseChooseSuburbs::creating transaction...\n";
-#                     $printLogger->print("  -", $_->{'text'}, "\n");
+                     #$printLogger->print("  -", $_->{'text'}, "\n");
                      my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url);
                      #print $_->{'value'},"\n";
                      # add this new transaction to the list to return for processing
@@ -520,8 +510,7 @@ sub parseDomainSalesChooseSuburbs
                }
             }
          }
-         
-         $printLogger->print("   ParseChooseSuburbs:Created a transaction for $noOfTransactions suburbs...\n");                             
+         $printLogger->print("   ParseChooseSuburbs:Created a transaction for $noOfTransactions suburbs in '$currentRegion'...\n");                             
       }	  
       else       
       {
@@ -565,6 +554,7 @@ sub parseDomainSalesChooseSuburbs
    }   
 }
 
+
 # -------------------------------------------------------------------------------------------------
 # parseDomainSalesChooseRegions
 # parses the htmlsyntaxtree to select the regions to follow
@@ -594,6 +584,8 @@ sub parseDomainSalesChooseRegions
    my $url = shift;
    my $instanceID = shift;
    my $transactionNo = shift;
+   my $threadID = shift;
+   
    my $htmlForm;
    my $actionURL;
    my $httpTransaction;
@@ -620,45 +612,126 @@ sub parseDomainSalesChooseRegions
           
          # get all of the checkboxes and set them
          $checkboxListRef = $htmlForm->getCheckboxes();
-               
- #        foreach (@$checkboxListRef)
- #        {                 
- #           # $_ is a reference to an HTMLFormCheckbox
- #           # set this checkbox input to true
- #           $htmlForm->setInputValue($_->getName(), $_->getValue());
- #           
- #           # create a transaction for only this checkbox selected
- #           my %formParameters = $htmlForm->getPostParameters();
- #           
- #           #DebugTools::printHash("$noOfTransactions", \%postParameters);
- #           my $newHTTPTransaction = HTTPTransaction::new($actionURL, 'GET', \%formParameters, $url);
- #                                                      
- #           # add this new transaction to the list to return for processing
- #           $transactionList[$noOfTransactions] = $newHTTPTransaction;
- #           $noOfTransactions++;
- #            
- #           # clear the checkbox value before the next post
- #           $htmlForm->clearInputValue($_->getName());
- #        }
-         
-         #$printLogger->print("   parseChooseRegions: returning a POST transaction for each checkbox...\n");
-         
+             
+         # 26 Oct 2004 - just process all the suburbs in the next region, then drop back to 
+         # to the home page to start a new session with new cookies
+         $startFirstRegion = 0;
+         $restartLastRegion = 0;
+         $continueNextRegion = 0;
+        
+         $lastRegion = loadLastRegion($threadID);  # load the last region processed in this thread
+         # if not already processing regions in this process instance check if 
+         # continuing a thread or starting from scratch
+         if ((!defined $currentRegion) || ($currentRegion eq 'Nil'))
+         {
+            # the last region isn't defined for this thread - start from the beginning
+            if ((!defined $lastRegion) || ($lastRegion eq 'Nil'))
+            {
+               $startFirstRegion = 1;
+            }
+            else
+            {
+               # the last region is defined in the recovery file - continue processing that region
+               # as isn't know if it terminated correctly
+               $restartLastRegion = 1;
+            }
+         }
+         else
+         {
+            # continue from the next region in the list (still in the same process)
+            $continueNextRegion = 1;
+         }
+
+#         print "restartLastRegion:$restartLastRegion startFirstRegion:$startFirstRegion continueNextRegion:$continueNextRegion\n";
+
+         # loop through all the regions defined in this page - the flags are used to determine 
+         # which one to set for the transaction
+         $regionAdded = 0;         
+         $useNextRegion = 0;
+         $useThisRegion = 0;
          foreach (@$checkboxListRef)
-         {                 
-            # $_ is a reference to an HTMLFormCheckbox
-            # set this checkbox input to true
-            $htmlForm->setInputValue($_->getName(), $_->getValue());            
-         #$htmlForm->printForm();
-            my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url);
+         {   
+            if (!$useNextRegion)
+            {       
+               # if the lastRegion processed with the current checkbox then the next checkbox is the 
+               # one to process this time
+               if ($continueNextRegion)
+               {            
+                  # have previously processed a region - move onto the next one
+                  if ($currentRegion eq $_->getValue())
+                  {
+                     # this is the last region processed - set a flag to use the next one instead
+                     $useNextRegion = 1;
+                  }
+               }
+               else
+               {
+                  if ($restartLastRegion)
+                  {
+                     # restart from the region in the recovery file
+                     if ($lastRegion eq $_->getValue())
+                     {
+                        # this is it - start from here
+                        $useThisRegion = 1;
+                     }
+                  }
+                  else
+                  {
+                     # otherwise we're continuing tfrom the start
+                     $useThisRegion = 1;
+                  }
+               }
+            }
+            else
+            {
+               # the $useNextRegion flag was set in the last iteration - now set useThisRegion flag
+               # to processs this one
+               $useThisRegion = 1;
+            }
+            
+#            print "   ", $_->getValue(), ":useThisRegion:$useThisRegion useNextRegion:$useNextRegion\n";
+            
+            # if this flag has been set in the logic above, a transaction is used for this region
+            if ($useThisRegion)
+            {      
+               # $_ is a reference to an HTMLFormCheckbox
+               # set this checkbox input to true
+               $htmlForm->setInputValue($_->getName(), $_->getValue());            
+               
+               # set global variable for display purposes only
+               $currentRegion = $_->getValue();
+               
+               my $newHTTPTransaction = HTTPTransaction::new($htmlForm, $url);
+               # add this new transaction to the list to return for processing
+               $transactionList[$noOfTransactions] = $newHTTPTransaction;
+               $noOfTransactions++;
+
+               $htmlForm->clearInputValue($_->getName());
+               
+               # record which region was last processed in this thread
+               saveLastRegion($threadID, $_->getValue());
+               $regionAdded = 1;
+               last;   # break out of the checkbox loop
+            }
+         }
+
+         if (!$regionAdded)
+         {
+            # no more regions to process - finished
+            saveLastRegion($threadID, 'nil');
+         }
+         else
+         {
+            # add the home directory as the second transaction to start a new session for the next region
+            ##### NEED TO RESET COOKIES HERE?
+            my $newHTTPTransaction = HTTPTransaction::new('http://www.domain.com.au/Public/advancedsearch.aspx?mode=buy', undef);
+            
             # add this new transaction to the list to return for processing
             $transactionList[$noOfTransactions] = $newHTTPTransaction;
-#            $newHTTPTransaction->printTransaction();
             $noOfTransactions++;
-            #$printLogger->print("+", $_->getValue(), ":\n");
-            $htmlForm->clearInputValue($_->getName());
          }
-             
-         $printLogger->print("   parseChooseRegions: returning $noOfTransactions GET transaction for each checkbox...\n");
+         
+         $printLogger->print("   parseChooseRegions: returning $noOfTransactions GET transactions (next region and home)...\n");
             
       }	  
       else 
@@ -734,6 +807,10 @@ sub parseDomainSalesChooseState
    my $state = $documentReader->getGlobalParameter('state');
    my @transactionList;
    
+   # delete cookies to start a fresh session 
+   $documentReader->deleteCookies();
+   
+   
    # --- now extract the property information for this page ---
    $printLogger->print("inParseChooseState:\n");
    if ($htmlSyntaxTree->containsTextPattern("Advanced Search"))
@@ -755,6 +832,7 @@ sub parseDomainSalesChooseState
    {
       $printLogger->print("parseChooseState: pattern not found\n");
    }
+
    
    # return a list with just the anchor in it
    if ($anchor)
@@ -872,7 +950,7 @@ sub parseDomainSalesSearchResults
       }                      
         
       $length = @anchorsList;         
-      $printLogger->print("   parseSearchResults: following $length anchors...\n");               
+      $printLogger->print("   parseSearchResults: following $length properties for '$currentRegion'...\n");               
    }	  
    else
    {
@@ -932,3 +1010,105 @@ sub parseDomainSalesDisplayResponse
    return @emptyList;
    
 }
+
+
+# -------------------------------------------------------------------------------------------------
+# saveLastRegion
+
+#
+# Purpose:
+#  Debugging
+#
+# Parametrs:
+#  nil
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  $this->{'requestRef'} 
+#  $this->{'responseRef'}
+#
+# Returns:
+#   nil
+#
+sub saveLastRegion
+
+{
+   my $thisThreadID = shift;
+   my $regionName = shift;
+   my $recoveryPointFileName = "RecoverDomainRegion.last";
+   my %regionList;
+   
+   # load the cookie file name from the recovery file
+   open(SESSION_FILE, "<$recoveryPointFileName") || print "   Can't open last domain region file: $!\n"; 
+  
+   $index = 0;
+   # loop through the content of the file
+   while (<SESSION_FILE>) # read a line into $_
+   {
+      # remove end of line marker from $_
+      chomp;
+      # split on null character
+      ($threadID, $region) = split /=/;
+    
+      $regionList{$threadID} = $region;
+
+      $index++;                    
+   }
+   
+   close(SESSION_FILE);     
+   
+   # update this threadID
+   $regionList{$thisThreadID} = $regionName;
+   
+   # save the new file with the thread removed  
+   open(SESSION_FILE, ">$recoveryPointFileName") || print "Can't open file: $!"; 
+   
+   # loop through all of the elements (in reverse so they can be read into a stack)
+   foreach (keys %regionList)      
+   {        
+      print SESSION_FILE $_."=".$regionList{$_}."\n";        
+   }
+
+#   print "savedLastRegion$thisThreadID=", $regionList{$thisThreadID}, "\n";
+   
+   close(SESSION_FILE);          
+}
+
+# -------------------------------------------------------------------------------------------------
+
+# reads the name of the session corresponding to this thread from the recovery file
+sub loadLastRegion
+
+{
+   my $thisThreadID = shift;
+   my $regionName;
+   my $recoveryPointFileName = "RecoverDomainRegion.last";
+   my %regionList;
+   
+   # load the cookie file name from the recovery file
+   open(SESSION_FILE, "<$recoveryPointFileName") || print "   Can't open last domain region file: $!\n"; 
+  
+   $index = 0;
+   # loop through the content of the file
+   while (<SESSION_FILE>) # read a line into $_
+   {
+      # remove end of line marker from $_
+      chomp;
+      # split on null character
+      ($threadID, $regionName) = split /=/;
+    
+      $regionList{$threadID} = $regionName;
+
+      $index++;                    
+   }
+   
+   close(SESSION_FILE);     
+#   print "loadedLastRegion:$thisThreadID=", $regionList{$thisThreadID}, "\n";
+   
+   return $regionList{$thisThreadID};
+} 
+
+# -------------------------------------------------------------------------------------------------
+

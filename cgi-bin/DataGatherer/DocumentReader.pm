@@ -48,6 +48,9 @@
 #   to pass global/instance variables into the parsers
 #               7 Oct 2004 - constructor of HTTPTransaction changed to accept an HTML form in order to handle complex post
 #   parameters better.  This class have been updated to use the new constructor.
+#              26 Oct 2004 - added parameter to all parser callbacks specifying the threadID for this instance - it can be used
+#   by the parsers to retain state information
+#                          - added delete cookies function to start a fresh session
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -120,7 +123,8 @@ sub new ($ $ $ $ $ $ $ $ $)
       transactionNo => 0,
       lowMemoryError => 0,
       threadID => $threadID,
-      parametersHashRef => $parametersHashRef
+      parametersHashRef => $parametersHashRef,
+      httpClient => undef
    };               
    
    bless $documentReader;     
@@ -626,8 +630,14 @@ sub _fetchDocument
                         
    if ($nextTransaction->methodIsGet())
    {      
-      $url = new URI::URL($nextTransaction->getURL(), $startURL)->abs()->as_string();      
-      $printLogger->print("GET: ", $url, "\n");     
+      $url = new URI::URL($nextTransaction->getURL(), $startURL)->abs()->as_string();
+      
+      ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
+      $year += 1900;
+      $mon++;      
+      
+      $displayStr = sprintf("%02d:%02d:%02d  GET: %s\n", $hour, $min, $sec, $url);     
+      $printLogger->print($displayStr);     
       
       $httpClient->setReferer($nextTransaction->getReferer());
 
@@ -650,9 +660,15 @@ sub _fetchDocument
    {
       if ($nextTransaction->methodIsPost())
       {                                  
-         $url = new URI::URL($nextTransaction->getURL(), $startURL)->abs()->as_string();      
-         $printLogger->print("POST: ", $url, "\n");                
-                  
+         $url = new URI::URL($nextTransaction->getURL(), $startURL)->abs()->as_string();    
+         
+         ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
+         $year += 1900;
+         $mon++;      
+         
+         $displayStr = sprintf("%02d:%02d:%02d POST: %s\n", $hour, $min, $sec, $url);   
+         $printLogger->print($displayStr);     
+                           
          $escapedParameters = $nextTransaction->getEscapedParameters();
          
          $httpClient->setReferer($nextTransaction->getReferer());                 
@@ -794,7 +810,7 @@ sub _parseDocument
 	   	# get the value from the hash with the pattern matching the callback function
 		   # the value in the cash is a code reference (to the callback function)		            
 		   my $callbackFunction = $$parserHashRef{$parserPatternList[$parserIndex]};		  		  
-         my @callbackTransactionStack = &$callbackFunction($this, $htmlSyntaxTree, $url, $this->{'instanceID'}, $this->{'transactionNo'});
+         my @callbackTransactionStack = &$callbackFunction($this, $htmlSyntaxTree, $url, $this->{'instanceID'}, $this->{'transactionNo'}, $this->{'threadID'});
 		
          $endTime = time;
          $runningTime = $endTime - $startTime;
@@ -948,7 +964,8 @@ sub run ( $ )
    
       $httpClient = HTTPClient::new($this->{'instanceID'});      
       $httpClient->setProxy($this->{'proxy'});
-      $httpClient->setUserAgent($DEFAULT_USER_AGENT);      
+      $httpClient->setUserAgent($DEFAULT_USER_AGENT);
+      $this->{'httpClient'} = $httpClient;      
       $nextTransaction = HTTPTransaction::new($startURL, undef);  # no referer - this is first request
       
       if ($this->_fetchDocument($nextTransaction, $httpClient, $startURL))
@@ -979,6 +996,8 @@ sub run ( $ )
             
       $httpClient->setProxy($this->{'proxy'});
       $httpClient->setUserAgent($DEFAULT_USER_AGENT);
+      $this->{'httpClient'} = $httpClient;   
+      
       $maxURLsPerSession = 0;
       $currentIndex = 0;
       $urlValid = 1;
@@ -1297,6 +1316,42 @@ sub recoverCookies
          print "Failed to duplicate previous cookie file\n";
       }
    }      
+}
+
+# -------------------------------------------------------------------------------------------------
+# deleteCookies
+#  deletes cookies from disk - used to start a clean session
+# 
+# Purpose:
+#
+# Parametrs:
+# nil
+
+# Constraints:
+#  nil
+#
+# Updates:
+#  $this->{'requestRef'} 
+#  $this->{'responseRef'}
+#
+# Returns:
+#   nil
+#
+sub deleteCookies
+
+{
+   my $this = shift;
+   
+   my $instanceID = $this->{'instanceID'};
+   my $httpClient = $this->{'httpClient'};
+   
+   $httpClient->clearCookies();
+#   print "Deleting cookie file logs/".$instanceID.".cookies\n";
+   # copy the old file in place of the new one
+   if (!unlink("logs/".$instanceID.".cookies"))
+   {
+      print "Failed to delete cookie file\n";
+   }
 }
 
 # -------------------------------------------------------------------------------------------------

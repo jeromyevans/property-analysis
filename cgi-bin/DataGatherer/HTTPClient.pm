@@ -23,6 +23,8 @@
 #  2 Oct 2004 - disabled stripping out the parameters from referer for privacy - some servers depended on it
 #  7 Oct 2004 - changed post to accept an encoded content string instead of a hash for the content
 #  17 Oct 2004 - added retransmissions for 500 response code (internal server error)
+#  26 Oct 2004 - added clearCookies function
+
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -347,6 +349,7 @@ sub get()
    
    # set cookies in the header
    $cookieJar->add_cookie_header($request);
+#print $cookieJar->as_string();
    $request->remove_header('Cookie2');   
    
    #print "---REQUEST\n";
@@ -462,7 +465,7 @@ sub post()
    $cookieJar->load();
    # set the cookie jar handler
    $userAgent->cookie_jar($cookieJar);
-   
+#print $cookieJar->as_string();   
    $header = $this->prepareRequestHeader($absoluteURL);
    $header->header('Content-Type' => 'application/x-www-form-urlencoded');
    $header->header('Content-Length' => length $content);
@@ -716,3 +719,34 @@ sub saveTransactionLog()
    close(SESSION_FILE);      
 }
 # -------------------------------------------------------------------------------------------------
+
+# -------------------------------------------------------------------------------------------------
+# clears the cookiejar associated with this client
+# 
+# Purpose:
+#  Retreiving a document via HTTP
+#
+# Parameters:
+#  nil
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   STRING containing url, or undef
+#
+sub clearCookies()
+
+{
+   my $this = shift;
+
+   $cookieJar = $this->{'cookieJarRef'};  
+   if ($cookieJar)
+   {
+      $cookieJar->clear();
+   }
+}
+
