@@ -262,7 +262,7 @@ sub estimateRent
    $suburbName = $$propertyDataHashRef{'SuburbName'};       
    $suburbName =~ tr/[A-Z]/[a-z]/;      
    
-   ($officialSalesMean, $officialRentalMean) = $analysisTools->fetchOfficialMeans($suburbName);
+   ($officialSalesMean, $officialRentalMean) = $analysisTools->fetchOfficialMedians($suburbName);
    
    # for the house price, use the lower of the two available values
    # (to give worse result)
@@ -317,7 +317,7 @@ sub callback_analysisDataTable
    
    getOrderBy();
       
-   print "<table><tr><th>Suburb</th><th>Field</th><th>Min</th><th>Mean</th><th>Median</th><th>Max</th><th>StdDev</th><th>(Sample Size)</th></tr>\n";            
+   print "<table><tr><th>Suburb</th><th>Field</th><th>Min</th><th>Median</th><th>REIWA Median</th><th>Max</th><th>StdDev</th><th>(Sample Size)</th></tr>\n";            
    
    $analysisTools->calculateSalesAnalysis();
    $analysisTools->calculateRentalAnalysis();
@@ -325,10 +325,13 @@ sub callback_analysisDataTable
       
    $noOfSales = $analysisTools->getNoOfSalesHash();
    $noOfRentals = $analysisTools->getNoOfRentalsHash();
-   $salesMean = $analysisTools->getSalesMeanHash();
-   $rentalMean = $analysisTools->getRentalMeanHash();
-   $meanYield = $analysisTools->getMeanYieldHash();
+   #$salesMean = $analysisTools->getSalesMeanHash();
+   #$rentalMean = $analysisTools->getRentalMeanHash();
    
+   $salesMedian = $analysisTools->getSalesMedianHash();
+   $rentalMedian = $analysisTools->getRentalMedianHash();
+   $medianYield = $analysisTools->getMedianYieldHash();
+
    # get the list of suburbs from the keys of listings (any of the hashes would do)
    # and sort it into alphabetical order   
    if ($orderBy eq 'suburb')
@@ -340,8 +343,8 @@ sub callback_analysisDataTable
    {            
       $index = 0;
    
-      # sort the suburb names by the values of the mean                   
-      foreach (sort { $$salesMean{$b} <=> $$salesMean{$a} } keys %$salesMean)           
+      # sort the suburb names by the values of the median                   
+      foreach (sort { $$salesMedian{$b} <=> $$salesMedian{$a} } keys %$salesMedian)           
       {                                        
           $suburbList[$index] = $_;
           $index++;
@@ -350,9 +353,9 @@ sub callback_analysisDataTable
    elsif ($orderBy eq 'rent')
    {
       $index = 0;
-      # sort the suburb names by the values of the rental mean total
+      # sort the suburb names by the values of the rental median total
       # ie. calls sort on the keys (suburbs) of rentalsumOfSalePrices but uses <=> to compare the values of each key      
-      foreach (sort { $$rentalMean{$b} <=> $$rentalMean{$a} } keys %$rentalMean)           
+      foreach (sort { $$rentalMedian{$b} <=> $$rentalMedian{$a} } keys %$rentalMedian)           
       {                              
           $suburbList[$index] = $_;
           $index++;
@@ -363,7 +366,7 @@ sub callback_analysisDataTable
       $index = 0;      
       # sort the suburb names by the values of the yield
       # ie. calls sort on the keys (suburbs) of yeild but uses cmp to compare the values of each key      
-      foreach (sort { $$meanYield{$b} <=> $$meanYield{$a} } keys %$meanYield)           
+      foreach (sort { $$medianYield{$b} <=> $$medianYield{$a} } keys %$medianYield)           
       {                              
           $suburbList[$index] = $_;
           $index++;
@@ -398,22 +401,22 @@ sub callback_analysisDataTable
       $maxPriceInstance = commify(sprintf("\$%.0f", $$maxSalePrice{$_}));
       $salesStdDevInstance = commify(sprintf("\$%.0f", $$salesStdDev{$_}));
       $rentalStdDevInstance = commify(sprintf("\$%.0f", $$rentalStdDev{$_}));     
-      if ($$salesMean{$_} > 0)
+      if ($$salesMedian{$_} > 0)
       {
-         $salesStdDevPercentInstance = commify(sprintf("%.2f", $$salesStdDev{$_}*100/$$salesMean{$_}));
+         $salesStdDevPercentInstance = commify(sprintf("%.2f", $$salesStdDev{$_}*100/$$salesMedian{$_}));
       }
-      if ($$rentalMean{$_} > 0)
+      if ($$rentalMedian{$_} > 0)
       {
-         $rentalStdDevPercentInstance = commify(sprintf("%.2f", $$rentalStdDev{$_}*100/$$rentalMean{$_}));
+         $rentalStdDevPercentInstance = commify(sprintf("%.2f", $$rentalStdDev{$_}*100/$$rentalMedian{$_}));
       }
       $noOfSaleListings = $$noOfSales{$_};      
       if ($noOfSaleListings > 0)
       {
-         $meanPriceInstance = commify(sprintf("\$%.0f", $$salesMean{$suburbName}));
+         $medianPriceInstance = commify(sprintf("\$%.0f", $$salesMedian{$suburbName}));
       }
       else
       {
-         $meanPriceInstance = "\$0";         
+         $medianPriceInstance = "\$0";         
       }
        
       $minRentInstance = commify(sprintf("\$%.0f", $$minRentalPrice{$_}));
@@ -421,16 +424,16 @@ sub callback_analysisDataTable
       $noOfRentListings = $$noOfRentals{$_};
       if ($noOfRentListings > 0)
       {
-         $meanRentInstance = commify(sprintf("\$%.0f", $$rentalMean{$suburbName}));                  
-                  
-         $meanYieldInstance = sprintf("%.1f", $$meanYield{$_});
-         $medianSaleInstance = commify(sprintf("\$%.0f", $$officialSalesMedian{$_}));
-         $medianRentalInstance = commify(sprintf("\$%.0f", $$officialRentalMedian{$_}));         
+         $medianRentInstance = commify(sprintf("\$%.0f", $$rentalMedian{$suburbName}));                  
+   #      print "yield{$_}=", $$medianYield{$_}, "\n";
+         $medianYieldInstance = sprintf("%.1f", $$medianYield{$_});
+         $officialSalesInstance = commify(sprintf("\$%.0f", $$officialSalesMedian{$_}));
+         $officialRentalInstance = commify(sprintf("\$%.0f", $$officialRentalMedian{$_}));         
                 
          #<th>2br</th><th>3x1</th><th>3x2</th><th>4x2</th><th>4x3</th><th>5br</th></tr>\n";
-         print "<tr><td rows='2'>$suburbName</td><td>Sale</td><td>$minPriceInstance</td><td>$meanPriceInstance</td><td>$medianSaleInstance</td><td>$maxPriceInstance</td><td>$salesStdDevInstance/(%$salesStdDevPercentInstance)</td><td><a href='", self_url(), "&suburb=", URI::Escape::uri_escape($suburbName),"'>$noOfSaleListings listings</a></td></tr>\n";
-         print "<tr><td></td><td>Rent</td><td>$minRentInstance</td><td>$meanRentInstance</td><td>$medianRentalInstance</td><td>$maxRentInstance</td><td>$rentalStdDevInstance/(%$rentalStdDevPercentInstance)</td><td>($noOfRentListings)</td></tr>\n";
-         print "<tr><td></td><td>Yield</td><td></td><td></td><td>%$meanYieldInstance</td></tr>\n";
+         print "<tr><td rows='2'>$suburbName</td><td>Sale</td><td>$minPriceInstance</td><td>$medianPriceInstance</td><td>$officialSalesInstance</td><td>$maxPriceInstance</td><td>$salesStdDevPercentInstance%</td><td><a href='", self_url(), "&suburb=", URI::Escape::uri_escape($suburbName),"'>$noOfSaleListings listings</a></td></tr>\n";
+         print "<tr><td></td><td>Rent</td><td>$minRentInstance</td><td>$medianRentInstance</td><td>$officialRentalInstance</td><td>$maxRentInstance</td><td>$rentalStdDevPercentInstance%</td><td>($noOfRentListings)</td></tr>\n";
+         print "<tr><td></td><td>Yield</td><td></td><td>%$medianYieldInstance</td><td></td></tr>\n";
       }
    }
       
