@@ -251,7 +251,8 @@ sub get()
    my $request;    # HTTP::Request
    my $response;  # HTTP::Response
    my $success = 1;    
-   my $cookieJar = $this->{'cookieJarRef'};
+   #23May04 my $cookieJar = $this->{'cookieJarRef'};
+   my $cookieJar;
                    
    $userAgent = $this->{'userAgentRef'};  # get user agent for this instance     
   
@@ -263,6 +264,11 @@ sub get()
    
    $this->_initialiseHeader($request);
    
+   # 23 May 2004 - load and assign cookies
+   $cookieJar->load();   
+   # set the cookie jar handler
+   $userAgent->cookie_jar($cookieJar);
+   
    # issue the request...get a response
    $response = $userAgent->request($request);
    $this->{'responseRef'} = $response;    # update instance variable
@@ -271,6 +277,9 @@ sub get()
    {
       $this->saveTransactionLog();
    }   
+   
+   #23 May 2004 - get the updated cookie jar
+   $cookieJar = $userAgent->cookie_jar();
    
    # search the response for any cookies in the header
    $cookieJar->extract_cookies($response);   
@@ -325,8 +334,9 @@ sub post()
    my $userAgent;  # LWP::UserAgent
    my $request;    # HTTP::Request
    my $response;   # HTTP::Response
-   my $success = 1;    
-   my $cookieJar = $this->{'cookieJarRef'};  
+   my $success = 1;       
+   #23May04 my $cookieJar = $this->{'cookieJarRef'};
+   my $cookieJar;
    my @postParameters;
                 
    $userAgent = $this->{'userAgentRef'};  # get user agent for this instance
@@ -353,7 +363,12 @@ sub post()
    
    $this->_initialiseHeader($request);           
    $this->{'requestRef'} = $request;      # update instance variable      
-      
+   
+   # 23 May 2004 - load and assign cookies
+   $cookieJar->load();   
+   # set the cookie jar handler
+   $userAgent->cookie_jar($cookieJar);   
+   
    #print "---[Request]---\n", $request->as_string(), "---[end]---\n";
    
    # issue the request...get a response
@@ -364,6 +379,9 @@ sub post()
    {
       $this->saveTransactionLog();
    }   
+   
+   #23 May 2004 - get the updated cookie jar
+   $cookieJar = $userAgent->cookie_jar();
    
    # search the response for any cookies in the header
    $cookieJar->extract_cookies($response); 
