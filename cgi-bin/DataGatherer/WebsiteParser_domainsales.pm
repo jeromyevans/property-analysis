@@ -1070,14 +1070,14 @@ sub parseDomainSalesSearchResults
             {   
                $printLogger->print("   parseSearchResults: adding anchor id ", $sourceID, "...\n");
                #$printLogger->print("   parseSearchResults: url=", $sourceURL, "\n"); 
-  #             my $httpTransaction = HTTPTransaction::new($sourceURL, $url, $parentLabel.".".$sourceID);                  
+               my $httpTransaction = HTTPTransaction::new($sourceURL, $url, $parentLabel.".".$sourceID);                  
                #push @urlList, $sourceURL;
-  #             push @urlList, $httpTransaction;
+               push @urlList, $httpTransaction;
             }
             else
             {
                $printLogger->print("   parseSearchResults: id ", $sourceID , " in database. Updating last encountered field...\n");
-  #             $advertisedSaleProfiles->addEncounterRecord($sourceName, $sourceID, undef);
+               $advertisedSaleProfiles->addEncounterRecord($sourceName, $sourceID, undef);
             }
          }
          
