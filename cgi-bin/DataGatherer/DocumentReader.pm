@@ -549,6 +549,7 @@ sub _fetchDocument
       {
          $printLogger->print("failed ", $httpClient->responseCode(), "\n");
       }
+      print "HTTP (GET) Response Code: ", $httpClient->responseCode(), "\n";
    }
    else
    {
@@ -568,7 +569,9 @@ sub _fetchDocument
          else
          {
             $printLogger->print("failed ", $httpClient->responseCode(), "\n");
-         }         
+         }   
+         
+         print "HTTP (POST) Response Code: ", $httpClient->responseCode(), "\n";
       }
    }
    

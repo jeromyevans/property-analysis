@@ -54,6 +54,10 @@
 #  for extracting pertinent information from the link text rather than the URL.
 # 23 May 2004 - if a checkbox is encountered in a form, it's now ignored unless
 #   the selected attribute is set
+# 11 July 2004 - added support for the form to maintain a list of defined checkboxes.  Doesn't impact
+#   the function above, but can be used to get a list of defined checkboxes for parsing (for instance,
+#   if the application wants to set or clear certain one automatically)
+# 11 July 2004 - added support for image INPUT type - sets x and y position to 1 in the parameters
 #
 # Description:
 #   Module that accepts an HTTP::Response and runs a parser (HTTP:TreeBuilder)
@@ -248,7 +252,7 @@ sub _treeBuilder_callBack
    {
       # this element is a tag...
       #   record the tag name, a reference to the HTML::Element and the current index
-      
+      #print "tag: ", $currentElement->tag(), "\n";
       # special case handling:
       # - if the element is a SCRIPT, do not proceed into it's children
       if ($currentElement->tag() eq "script")
@@ -342,7 +346,7 @@ sub _treeBuilder_callBack
                {           
                   # check if the HTML form is defined            
                   if ($this->{'htmlFormListRef'})                  
-                  {                                                                    
+                  {                 
                      $type = $currentElement->attr('type');
                      $value = $currentElement->attr('value');
                      $name = $currentElement->attr('name');
@@ -361,13 +365,39 @@ sub _treeBuilder_callBack
                      # if the type is checkbox...
                      if ($type =~ /CHECKBOX/i)
                      {
-                        # it it's not selected, ignore it
+                        # --- 11July04 START ---
+                        $checkboxSelected = $currentElement->attr('selected');
+                      
+                        $textValue = "";
+
+                        # note: the 'textValue' is the next text element in the tree, but isn't necessary defined
+                        # fort he time being, it's ignored
+                        # 11 July 2004 - add the checkbox to the list of checkboxes for the form
+                        $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->addCheckbox($name, $textValue, defined $checkboxSelected);
+                                               
+                        # --- 11July04 END ---
+                        
+                        # it it's not selected, don't add to the input value parameters
                         if (!defined $currentElement->attr('selected'))
                         {
                            $name = undef;
                         }
                      }     
                      
+                     # if the type is image...
+                     if ($type =~ /IMAGE/i)
+                     {
+                        # image needs special handling as the x and y offset of the
+                        # click position.  Set the offset to (1,1)
+                        # ensure the name is actually defined though
+                        if ($name)
+                        {
+                           $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->setInputValue($name.".x", '1');
+                           $this->{'htmlFormListRef'}[$this->{'htmlFormListLength'}-1]->setInputValue($name.".y", '1');
+                        }
+                        # clear name - don't need to use it anymore
+                        $name = undef;
+                     }
                      
                      # if the type is reset, then ignore it
                      

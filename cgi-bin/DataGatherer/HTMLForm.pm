@@ -9,6 +9,8 @@
 #  1 June 2004 - modified getPostParameters to return the first option in a selection
 # if no default value is defined.  Discovered this is the convention through testing.
 #
+#  11 July 2004 - added checkbox list handling functions
+#
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -20,6 +22,7 @@ package HTMLForm;
 require Exporter;
 
 use HTMLFormSelection;
+use HTMLFormCheckbox;
 
 @ISA = qw(Exporter);
 
@@ -48,7 +51,11 @@ sub new
       
       # reference to a list of selection inputs
       selectionListLength => 0,
-      selectionListRef => undef
+      selectionListRef => undef,
+      
+      # reference to a list of checkbox inputs
+      checkboxListLength => 0,
+      checkboxListRef => undef
    };      
    bless $htmlForm;    # make it an object of this class   
    
@@ -374,6 +381,72 @@ sub getSelectionOptions
    else
    {
       return undef;
+   }                                                                              
+}
+
+# -------------------------------------------------------------------------------------------------
+
+# -------------------------------------------------------------------------------------------------
+# addCheckbox
+#
+# Purpose:
+#  defines a checkbox in the form
+#
+# Parameters:
+#  string name for the checkbox
+#  string text value associated with the checkbox
+#  boolean isSelected
+# 
+# Updates:
+#  list of checkboxes
+#
+# Returns:
+#   nil
+#
+sub addCheckbox
+{
+   my $this = shift;
+   my $name = shift;
+   my $textValue = shift;
+   my $isSelected = shift;
+           
+   #  add this checkbox to the list
+   
+   my $htmlFormCheckbox = HTMLFormCheckbox::new($name, $textValue, $isSelected);
+   
+    #  add this selection to the table element index
+   $this->{'checkboxListRef'}[$this->{'checkboxListLength'}] = $htmlFormCheckbox;                                                                     
+   $this->{'checkboxListLength'}++;   
+}
+
+
+# -------------------------------------------------------------------------------------------------
+# getCheckboxes
+# returns a list of checkboxes available for a form
+#  retuns an array of hashes
+# Purpose:
+#  POSTing data to a form
+#
+# Parameters:
+#  nil
+# 
+# Updates:
+#  method
+#
+# Returns:
+#   reference to a list of hashes of checkboxes {name, textValue, isSelected}
+#
+sub getCheckboxes
+{
+   my $this = shift;
+     
+   if ($this->{'checkboxListLength'} > 0)
+   {
+      return $this->{'checkboxListRef'};
+   }       
+   else
+   {
+      return undef;  
    }                                                                              
 }
 
