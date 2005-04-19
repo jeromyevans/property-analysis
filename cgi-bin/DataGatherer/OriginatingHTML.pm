@@ -10,6 +10,10 @@
 #
 # History:
 # 19 Feb 2005 - hardcoded absolute log directory temporarily 
+# 19 Apr 2005 - modified storage path to stop using flat directory - it was getting too big (too many files) to manage
+#   now sorts into directory (1000 files per directory)
+#             - added basePath function that returns the base path used for OriginatingHTML files
+#             - added targetPath function that returns the target path for a specified OriginatingHTML file
 #
 # CONVENTIONS
 # _ indicates a private variable or method
@@ -235,6 +239,34 @@ sub dropTable
 
 # -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
+#
+# returns the base path used for the originating HTML files
+#
+sub basePath
+{
+   my $this = shift;
+   
+   return "/projects/changeeffect/OriginatingHTML"; 
+}
+
+# -------------------------------------------------------------------------------------------------
+#
+# returns the path to be used for the originating HTML with the specified identifier
+sub targetPath
+{
+   my $this = shift;
+   my $identifier = shift;
+ 
+   $targetDir = int($identifier / 1000);   
+   $basePath = $this->basePath();
+   $targetPath = $basePath."/$targetDir";
+   
+   return $targetPath;
+}
+
+
+# -------------------------------------------------------------------------------------------------
+
 
 
 # -------------------------------------------------------------------------------------------------
@@ -266,8 +298,10 @@ sub saveHTMLContent
    
    my $sessionFileName = $identifier.".html";
 
-   $logPath = "/projects/changeeffect/OriginatingHTML";
-   mkdir "$logPath", 0755;       	      
+   $logPath = $this->targetPath($identifier);
+   
+   mkdir $basePath, 0755;       	      
+   mkdir $logPath, 0755;       	      
    open(SESSION_FILE, ">>$logPath/$sessionFileName") || print "Can't open file: $!";
    print SESSION_FILE $content;
    close(SESSION_FILE);      
