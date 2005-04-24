@@ -14,6 +14,9 @@
 #   now sorts into directory (1000 files per directory)
 #             - added basePath function that returns the base path used for OriginatingHTML files
 #             - added targetPath function that returns the target path for a specified OriginatingHTML file
+# 21 Apr 2005 - modified saveHTMLContent to prefix each file with a header that identifies the source and timestamp
+#   This information is needed for reconstruction from the originatingHTML file
+# 22 Apr 2005 - added override basepath function for setting where to output originatingHTML files (used for recovery)
 #
 # CONVENTIONS
 # _ indicates a private variable or method
@@ -48,7 +51,9 @@ sub new
    
    my $originatingHTML = { 
       sqlClient => $sqlClient,
-      tableName => "OriginatingHTML"
+      tableName => "OriginatingHTML",
+      basePath => "/projects/changeeffect/OriginatingHTML", 
+      useFlatPath => 0
    }; 
       
    bless $originatingHTML;     
@@ -183,8 +188,10 @@ sub addRecord
             # between the two tables (in both directions)
             $sqlClient->alterForeignKey($foreignTableName, 'identifier', $foreignIdentifier, 'createdBy', $identifier);
             
+            $timeStamp = time();
+            
             # save the HTML content to disk using the primarykey as the filename
-            $this->saveHTMLContent($identifier, $htmlSyntaxTree->getContent());
+            $this->saveHTMLContent($identifier, $htmlSyntaxTree->getContent(), $url, $timestamp);
          }
       }
    }
@@ -246,7 +253,7 @@ sub basePath
 {
    my $this = shift;
    
-   return "/projects/changeeffect/OriginatingHTML"; 
+   return $this->{'basePath'};
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -257,13 +264,42 @@ sub targetPath
    my $this = shift;
    my $identifier = shift;
  
-   $targetDir = int($identifier / 1000);   
-   $basePath = $this->basePath();
-   $targetPath = $basePath."/$targetDir";
-   
+   if (!$this->{'useFlatPath'})
+   {
+      # this is the normal case - use subdirectories
+      $targetDir = int($identifier / 1000);   
+      $basePath = $this->basePath();
+      $targetPath = $basePath."/$targetDir";
+   }
+   else
+   {
+      $basePath = $this->basePath();
+      $targetPath = $basePath;
+   }
    return $targetPath;
 }
 
+
+# -------------------------------------------------------------------------------------------------
+#
+#
+sub overrideBasePath
+{
+   my $this = shift;
+   my $newBasePath = shift;
+   
+   $this->{'basePath'} = $newBasePath; 
+}
+
+
+# -------------------------------------------------------------------------------------------------
+
+sub useFlatPath
+{
+   my $this = shift;
+   
+   $this->{'useFlatPath'} = 1; 
+}
 
 # -------------------------------------------------------------------------------------------------
 
@@ -289,21 +325,88 @@ sub targetPath
 # Returns:
 #   nil
 #
-sub saveHTMLContent
+sub saveHTMLContent ($ $ $ $)
 
 {
    my $this = shift;
    my $identifier = shift;
    my $content = shift;
+   my $sourceURL = shift;
+   my $timeStamp = shift;
    
    my $sessionFileName = $identifier.".html";
-
+   my $header;
+   
    $logPath = $this->targetPath($identifier);
+   
+   $header = "<!---- OriginatingHTML -----\n".
+             "sourceurl=$sourceURL\n".
+             "localtime=$timeStamp\n".
+             "--------------------------->\n";
    
    mkdir $basePath, 0755;       	      
    mkdir $logPath, 0755;       	      
-   open(SESSION_FILE, ">>$logPath/$sessionFileName") || print "Can't open file: $!";
+   open(SESSION_FILE, ">$logPath/$sessionFileName") || print "Can't open file: $!";
+   print SESSION_FILE $header;
    print SESSION_FILE $content;
    close(SESSION_FILE);      
 }
+
+
+# -------------------------------------------------------------------------------------------------
+# readHTMLContent
+#  reads from disk the html content for the specified record
+# 
+# Purpose:
+#  Debugging
+#
+# Parameters:
+#  integer identifier (primary key of the OriginatingHTML)
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#
+# Returns:
+#   content
+#
+sub readHTMLContent
+
+{
+   my $this = shift;
+   my $identifier = shift;
+   my $fileName = $identifier.".html";
+   my @body;
+   my $content = undef;
+   
+   $sourcePath = $this->targetPath($identifier);
+   $lineNo = 0;
+   
+   if (open(SESSION_FILE, "<$sourcePath/$fileName"))
+   {
+      # read the content.
+      while (<SESSION_FILE>)
+      {
+         # add this line to the header section of the transaction
+         $body[$lineNo] = $_;
+         $lineNo++;
+      }
+      
+      if ($lineNo > 0)
+      {
+         $content = join '', @body;
+      }
+   }
+   else
+   {
+      $content = undef;
+   }
+   
+   close(SESSION_FILE);
+   
+   return $content;
+}
+
+# -------------------------------------------------------------------------------------------------
 
