@@ -333,21 +333,29 @@ sub saveHTMLContent ($ $ $ $)
    my $content = shift;
    my $sourceURL = shift;
    my $timeStamp = shift;
+   my $writeHeader = 0;
    
    my $sessionFileName = $identifier.".html";
    my $header;
    
    $logPath = $this->targetPath($identifier);
    
-   $header = "<!---- OriginatingHTML -----\n".
-             "sourceurl=$sourceURL\n".
-             "localtime=$timeStamp\n".
-             "--------------------------->\n";
+   if (($timeStamp) && ($sourceURL))
+   {
+      $header = "<!---- OriginatingHTML -----\n".
+                "sourceurl=$sourceURL\n".
+                "localtime=$timeStamp\n".
+                "--------------------------->\n";
+      $writeHeader = 1;
+   }
    
    mkdir $basePath, 0755;       	      
    mkdir $logPath, 0755;       	      
    open(SESSION_FILE, ">$logPath/$sessionFileName") || print "Can't open file: $!";
-   print SESSION_FILE $header;
+   if ($writeHeader)
+   {
+      print SESSION_FILE $header;
+   }
    print SESSION_FILE $content;
    close(SESSION_FILE);      
 }

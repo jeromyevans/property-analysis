@@ -12,6 +12,7 @@
 #                  - added check against SessionProgressTable to reject suburbs that appear 'completed' already
 #  in the table.  Should prevent procesing of suburbs more than once if the server returns the same suburb under
 #  multiple searches.  Note: completed indicates the propertylist has been parsed, not necessarily all the details.
+# 25 April  2005   - modified parsing of search results to ignore 'related results' returned by the search engine
 #
 # The parsers can't access any other global variables, but can use functions in the WebsiteParser_Common module
 # ---CVS---
@@ -499,7 +500,8 @@ sub parseDomainRentalSearchResults
    my $suburbName;
    my $recordsEncountered = 0;
    my $sessionProgressTable = $documentReader->getSessionProgressTable();
-
+   my $ignoreNextButton = 0;
+   
    $statusTable = $documentReader->getStatusTable();
   
     # --- now extract the property information for this page ---
@@ -516,71 +518,81 @@ sub parseDomainRentalSearchResults
       if ($sqlClient->connect())
       {
       
-         $htmlSyntaxTree->setSearchStartConstraintByText("Your search for properties");
-         $htmlSyntaxTree->setSearchEndConstraintByText("email me similar properties");
-      
-         # get the suburbname from the page - used to tracking progress...
-         $trialSuburbName = $htmlSyntaxTree->getNextTextAfterPattern("suburbs:");
-         $suburbName = matchSuburbName($sqlClient, $suburbName, $state);
-         if (!$suburbName)
+         # 25Apr05 - if zero results were found, it returns the results of a broader search - these
+         # aren't wanted, so discard the page if it contains this pattern
+         if (!$htmlSyntaxTree->containsTextPattern("A broader search of the same"))
          {
-            $suburbName = $trialSuburbName;
+         
+            $htmlSyntaxTree->setSearchStartConstraintByText("Your search for properties");
+            $htmlSyntaxTree->setSearchEndConstraintByText("email me similar properties");
+         
+            # get the suburbname from the page - used to tracking progress...
+            $trialSuburbName = $htmlSyntaxTree->getNextTextAfterPattern("suburbs:");
+            $suburbName = matchSuburbName($sqlClient, $suburbName, $state);
+            if (!$suburbName)
+            {
+               $suburbName = $trialSuburbName;
+            }
+            
+            $htmlSyntaxTree->resetSearchConstraints();
+            
+            # each entry is in it's own table.
+            # the suburb name and price are in an H4 tag
+            # the next non-image anchor href attribute contains the unique ID
+            
+            while ($htmlSyntaxTree->setSearchStartConstraintByTag('dl'))
+            {
+               
+               $titleString = $htmlSyntaxTree->getNextText();
+               $sourceURL = $htmlSyntaxTree->getNextAnchor();
+               
+               # not sure why this is needed - it shifts it onto the next property, otherwise it finds the same one twice. 
+               $htmlSyntaxTree->setSearchStartConstraintByTag('dl');
+               
+               # --- extract values ---
+               ($crud, $priceLowerString) = split(/\$/, $titleString, 2);
+               if ($priceLowerString)
+               {
+                  $priceLower = $documentReader->strictNumber($documentReader->parseNumber($priceLowerString));
+               }
+               else
+               {
+                  $priceLower = undef;
+               }
+               
+               # remove non-numeric characters from the string occuring after the question mark
+               ($crud, $sourceID) = split(/\?/, $sourceURL, 2);
+               $sourceID =~ s/[^0-9]//gi;
+               $sourceURL = new URI::URL($sourceURL, $url)->abs()->as_string();      # convert to absolute
+            
+               # check if the cache already contains this unique id            
+               if (!$advertisedRentalProfiles->checkIfTupleExists($sourceName, $sourceID, undef, $priceLower, undef))                              
+               {   
+                  $printLogger->print("   parseSearchResults: adding anchor id ", $sourceID, "...\n");
+                  #$printLogger->print("   parseSearchResults: url=", $sourceURL, "\n"); 
+                  my $httpTransaction = HTTPTransaction::new($sourceURL, $url, $parentLabel.".".$sourceID);                  
+                  #push @urlList, $sourceURL;
+                  push @urlList, $httpTransaction;
+               }
+               else
+               {
+                  $printLogger->print("   parseSearchResults: id ", $sourceID , " in database. Updating last encountered field...\n");
+                  $advertisedRentalProfiles->addEncounterRecord($sourceName, $sourceID, undef);
+               }
+               
+               $recordsEncountered++;  # count records seen
+               # 23Jan05:save that this suburb has had some progress against it
+               $sessionProgressTable->reportProgressAgainstSuburb($threadID, 1);
+               
+            }
+            
+            $statusTable->addToRecordsEncountered($threadID, $recordsEncountered, $url);
          }
-         
-         $htmlSyntaxTree->resetSearchConstraints();
-         
-         # each entry is in it's own table.
-         # the suburb name and price are in an H4 tag
-         # the next non-image anchor href attribute contains the unique ID
-         
-         while ($htmlSyntaxTree->setSearchStartConstraintByTag('dl'))
+         else
          {
-            
-            $titleString = $htmlSyntaxTree->getNextText();
-            $sourceURL = $htmlSyntaxTree->getNextAnchor();
-            
-            # not sure why this is needed - it shifts it onto the next property, otherwise it finds the same one twice. 
-            $htmlSyntaxTree->setSearchStartConstraintByTag('dl');
-            
-            # --- extract values ---
-            ($crud, $priceLowerString) = split(/\$/, $titleString, 2);
-            if ($priceLowerString)
-            {
-               $priceLower = $documentReader->strictNumber($documentReader->parseNumber($priceLowerString));
-            }
-            else
-            {
-               $priceLower = undef;
-            }
-            
-            # remove non-numeric characters from the string occuring after the question mark
-            ($crud, $sourceID) = split(/\?/, $sourceURL, 2);
-            $sourceID =~ s/[^0-9]//gi;
-            $sourceURL = new URI::URL($sourceURL, $url)->abs()->as_string();      # convert to absolute
-         
-            # check if the cache already contains this unique id            
-            if (!$advertisedRentalProfiles->checkIfTupleExists($sourceName, $sourceID, undef, $priceLower, undef))                              
-            {   
-               $printLogger->print("   parseSearchResults: adding anchor id ", $sourceID, "...\n");
-               #$printLogger->print("   parseSearchResults: url=", $sourceURL, "\n"); 
-               my $httpTransaction = HTTPTransaction::new($sourceURL, $url, $parentLabel.".".$sourceID);                  
-               #push @urlList, $sourceURL;
-               push @urlList, $httpTransaction;
-            }
-            else
-            {
-               $printLogger->print("   parseSearchResults: id ", $sourceID , " in database. Updating last encountered field...\n");
-               $advertisedRentalProfiles->addEncounterRecord($sourceName, $sourceID, undef);
-            }
-            
-            $recordsEncountered++;  # count records seen
-            # 23Jan05:save that this suburb has had some progress against it
-            $sessionProgressTable->reportProgressAgainstSuburb($threadID, 1);
-            
-         }
-         
-         $statusTable->addToRecordsEncountered($threadID, $recordsEncountered, $url);
-         
+            $printLogger->print("   parserSearchResults: zero matching results returned\n");
+            $ignoreNextButton = 1;
+         }  
       }
       else
       {
@@ -590,8 +602,10 @@ sub parseDomainRentalSearchResults
       # now get the anchor for the NEXT button if it's defined 
       $nextButton = $htmlSyntaxTree->getNextAnchorContainingPattern("Next");
                     
-      if ($nextButton)
-      {            
+       # ignore the next button if this flag is set (because these are 'related' results)
+      if (($nextButton) && (!$ignoreNextButton))
+      {
+         
          $printLogger->print("   parseSearchResults: list includes a 'next' button anchor...\n");
          $httpTransaction = HTTPTransaction::new($nextButton, $url, $parentLabel);                  
          @anchorsList = (@urlList, $httpTransaction);

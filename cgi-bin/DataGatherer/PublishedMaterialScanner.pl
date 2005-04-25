@@ -182,6 +182,14 @@ if (($parseSuccess) && (!($parameters{'command'} =~ /maintenance/i)))
                         $myParsers{"rsearch?a=d&"} = \&parseRealEstateRentalsSearchResults;
                         $myParsers{"rsearch?a=o&"} = \&parseRealEstateRentalsSearchDetails;
                      }
+                     else              
+                     {
+                        if ($parameters{'config'} =~ /Test/i)
+                        {
+                           $myParsers{"SearchResults"} = \&parseDomainSalesSearchResults;   
+                           $myParsers{"rsearch"} = \&parseRealEstateSearchResults;
+                        }
+                     }
                   }
                }
             }

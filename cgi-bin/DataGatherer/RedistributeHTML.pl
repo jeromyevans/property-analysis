@@ -58,50 +58,59 @@ my $originatingHTML = OriginatingHTML::new($sqlClient);
       
 $sqlClient->connect();          
 
-$sourcePath = "d:/projects/changeeffect/OriginatingHTML";
-# read the list of log files...
-$filteredFileList = readFileList($printLogger, $sourcePath."/");
+$sourcePath = param("ip");
 
-foreach (@$filteredFileList)
+if ($sourcePath)
 {
-   # determine which directory this file belongs in...
-   $fileName = $_;
-   $identifier = $fileName;
-   $identifier =~ s/\.html//gi;
+   # read the list of log files...
+   $filteredFileList = readFileList($printLogger, $sourcePath."/");
    
-   # read the source file
-   $sourceFileName = "$sourcePath/$fileName";
-   print "sourcefile: <$sourceFileName\n";
-   open (SESSION_FILE, "<$sourceFileName") or print "Can't open file: $!";
-   
-   # initialise blank content
-   $content = "";
-                 
-   while (<SESSION_FILE>) # read a line into $_
-   {   
-      # append to the content
-      $content .= $_;
-   }
-     
-   close(SESSION_FILE);
-   
-   # $content now contains the HTML content...
-   
-   # create new OriginatingHTML file in the destination directory...
-   # (this is using the new method)
-   $originatingHTML->saveHTMLContent($identifier, $content);
-   
-   $targetPath = $originatingHTML->targetPath($identifier);
-   $targetFileName = $targetPath."/$identifier.html";
-   
-   # now - DELETE the original file only if the new file exists
-   if (-e $targetFileName)
+   foreach (@$filteredFileList)
    {
-      print "   $sourceFileName is a candidate for deleting\n";
-      unlink ($sourceFileName);
+      # determine which directory this file belongs in...
+      $fileName = $_;
+      $identifier = $fileName;
+      $identifier =~ s/\.html//gi;
+      
+      # read the source file
+      $sourceFileName = "$sourcePath/$fileName";
+      print "sourcefile: <$sourceFileName\n";
+      open (SESSION_FILE, "<$sourceFileName") or print "Can't open file: $!";
+      
+      # initialise blank content
+      $content = "";
+                    
+      while (<SESSION_FILE>) # read a line into $_
+      {   
+         # append to the content
+         $content .= $_;
+      }
+        
+      close(SESSION_FILE);
+      
+      # $content now contains the HTML content...
+      
+      # create new OriginatingHTML file in the destination directory...
+      # (this is using the new method)
+      $originatingHTML->saveHTMLContent($identifier, $content, undef, undef);
+      
+      $targetPath = $originatingHTML->targetPath($identifier);
+      $targetFileName = $targetPath."/$identifier.html";
+      
+      # now - DELETE the original file only if the new file exists
+      if (-e $targetFileName)
+      {
+         print "   $sourceFileName is a candidate for deleting\n";
+         unlink ($sourceFileName);
+      }
    }
 }
-                                           
+else
+{
+   print "Specify input path:\n";
+   print "ip=$sourcePath\n";
+}
+
 $sqlClient->disconnect();
 
 

@@ -11,11 +11,11 @@
 # History:
 #  5 December 2004 - adapted to use common AdvertisedPropertyProfiles instead of separate rentals and sales tables
 # 22 January 2005  - added support for the StatusTable reporting of progress for the thread
-# 23 January 2004  - added support for the SessionProgressTable reporting of progress of the thread
+# 23 January 2005  - added support for the SessionProgressTable reporting of progress of the thread
 #                  - added check against SessionProgressTable to reject suburbs that appear 'completed' already
 #  in the table.  Should prevent procesing of suburbs more than once if the server returns the same suburb under
 #  multiple searches.  Note: completed indicates the propertylist has been parsed, not necessarily all the details.
-#
+#  25 April  2005   - modified parsing of search results to ignore 'related results' returned by the search engine
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -565,7 +565,8 @@ sub parseRealEstateSearchResults
    my $statusTable = $documentReader->getStatusTable();
    my $recordsEncountered = 0;
    my $sessionProgressTable = $documentReader->getSessionProgressTable();   # 23Jan05
-
+   my $ignoreNextButton = 0;
+   
    # --- now extract the property information for this page ---
    $printLogger->print("inParseSearchResults ($parentLabel):\n");
    @splitLabel = split /\./, $parentLabel;
@@ -577,129 +578,138 @@ sub parseRealEstateSearchResults
    if ($htmlSyntaxTree->containsTextPattern("Displaying"))
    {         
             
-      $htmlSyntaxTree->setSearchStartConstraintByText("properties found");
-      $htmlSyntaxTree->setSearchEndConstraintByText("Page:");
-      
-      $state = $SEEKING_FIRST_RESULT;
-      $endOfList = 0;
-      while (!$endOfList)
+      # if no exact matches are found the search engine sometimes returns related matches - these aren't wanted
+      if (!$htmlSyntaxTree->containsTextPattern("No exact matches found"))
       {
-         # state machine for processing the list of results
-         $parsedThisLine = 0;
-         $thisText = $htmlSyntaxTree->getNextText();
-         if (!$thisText)
-         {
-            # not set - at the end of the list - exit the state machine
-            $parsedThisLine = 1;
-            $endOfList = 1;
-         }
-         #print "START: state=$state: '$thisText' parsed=$parsedThisLine\n";
-         
-         if ((!$parsedThisLine) && ($state == $SEEKING_FIRST_RESULT))
-         {
-            # if this text is the suburb name, where in a new record
-            if ($thisText =~ /$suburbName/i)
-            {
-               $state = $PARSING_RESULT_TITLE;
-            }
-            $parsedThisLine = 1;
-         }
-         
-         if ((!$parsedThisLine) && ($state == $PARSING_RESULT_TITLE))
-         {
-            $title = $thisText;   # always set
-            $state = $PARSING_SUB_LINE;
-            $parsedThisLine = 1;
-         }
-         
-         if ((!$parsedThisLine) && ($state == $PARSING_SUB_LINE))
-         {
-            # optionally set to the price, or AUCTION or UNDER OFFER or SOLD
+         $htmlSyntaxTree->setSearchStartConstraintByText("properties found");
+         $htmlSyntaxTree->setSearchEndConstraintByText("Page:");
             
-            if ($thisText =~ /UNDER|SOLD/gi)
+         $state = $SEEKING_FIRST_RESULT;
+         $endOfList = 0;
+         while (!$endOfList)
+         {
+            # state machine for processing the list of results
+            $parsedThisLine = 0;
+            $thisText = $htmlSyntaxTree->getNextText();
+            if (!$thisText)
             {
-               $state = $PARSING_PRICE;
+               # not set - at the end of the list - exit the state machine
+               $parsedThisLine = 1;
+               $endOfList = 1;
+            }
+            #print "START: state=$state: '$thisText' parsed=$parsedThisLine\n";
+            
+            if ((!$parsedThisLine) && ($state == $SEEKING_FIRST_RESULT))
+            {
+               # if this text is the suburb name, where in a new record
+               if ($thisText =~ /$suburbName/i)
+               {
+                  $state = $PARSING_RESULT_TITLE;
+               }
                $parsedThisLine = 1;
             }
-            else
+            
+            if ((!$parsedThisLine) && ($state == $PARSING_RESULT_TITLE))
             {
-               if ($thisText =~ /Auction/gi)
+               $title = $thisText;   # always set
+               $state = $PARSING_SUB_LINE;
+               $parsedThisLine = 1;
+            }
+            
+            if ((!$parsedThisLine) && ($state == $PARSING_SUB_LINE))
+            {
+               # optionally set to the price, or AUCTION or UNDER OFFER or SOLD
+               
+               if ($thisText =~ /UNDER|SOLD/gi)
                {
-                  # price is not set for auctions
-                  $priceLower = undef;
-                  $state = $PARSING_SOURCE_ID;
+                  $state = $PARSING_PRICE;
                   $parsedThisLine = 1;
                }
                else
-               { 
-                   $state = $PARSING_PRICE;
-                   # don't set the parsed this line flag - keep processing
-               }
-            }
-         }
-           
-         if ((!$parsedThisLine) && ($state == $PARSING_PRICE))
-         {
-            ($priceLower, $priceHiger) = split(/-/, $thisText, 2);
-            if ($priceLower)
-            {
-               $priceLower = $documentReader->parseNumberSomewhereInString($priceLower);  # may be set to undef
-            }
-            $state = $PARSING_SOURCE_ID;
-            $parsedThisLine = 1;
-         }
-         
-         if ((!$parsedThisLine) && ($state == $PARSING_SOURCE_ID))
-         {
-            $anchor = $htmlSyntaxTree->getNextAnchor();
-            $temp=$anchor;
-            $temp =~ s/id=(.\d*)&f/$sourceID = sprintf("$1")/ei;
-
-            #print "$suburbName: '$title' \$$priceLower id=$sourceID\n";
-            
-            if (($sourceID) && ($anchor))
-            {
-               # check if the cache already contains this unique id
-               # $_ is a reference to a hash
-               if (!$advertisedSaleProfiles->checkIfTupleExists($sourceName, $sourceID, undef, $priceLower, undef))                              
-               {   
-                  $printLogger->print("   parseSearchResults: adding anchor id ", $sourceID, "...\n");
-                  #$printLogger->print("   parseSearchList: url=", $sourceURL, "\n");          
-                  my $httpTransaction = HTTPTransaction::new($anchor, $url, $parentLabel.".".$sourceID);                  
-             
-                  push @urlList, $httpTransaction;
-               }
-               else
                {
-                  $printLogger->print("   parseSearchResults: id ", $sourceID , " in database. Updating last encountered field...\n");
-                  $advertisedSaleProfiles->addEncounterRecord($sourceName, $sourceID, undef);
+                  if ($thisText =~ /Auction/gi)
+                  {
+                     # price is not set for auctions
+                     $priceLower = undef;
+                     $state = $PARSING_SOURCE_ID;
+                     $parsedThisLine = 1;
+                  }
+                  else
+                  { 
+                      $state = $PARSING_PRICE;
+                      # don't set the parsed this line flag - keep processing
+                  }
                }
             }
-            
-            $state = $SEEKING_NEXT_RESULT;
-            $parsedThisLine = 1;
-         }
-         
-         if ((!$parsedThisLine) && ($state == $SEEKING_NEXT_RESULT))
-         {
-            # searching for the start of the next result - possible outcomes are the
-            # start of the next result is found or the start of an advertisement is found
-            
-            if ($thisText eq $suburbName)
+              
+            if ((!$parsedThisLine) && ($state == $PARSING_PRICE))
             {
-               $state = $PARSING_RESULT_TITLE;
+               ($priceLower, $priceHiger) = split(/-/, $thisText, 2);
+               if ($priceLower)
+               {
+                  $priceLower = $documentReader->parseNumberSomewhereInString($priceLower);  # may be set to undef
+               }
+               $state = $PARSING_SOURCE_ID;
+               $parsedThisLine = 1;
             }
-            $parsedThisLine = 1;
-         }
+            
+            if ((!$parsedThisLine) && ($state == $PARSING_SOURCE_ID))
+            {
+               $anchor = $htmlSyntaxTree->getNextAnchor();
+               $temp=$anchor;
+               $temp =~ s/id=(.\d*)&f/$sourceID = sprintf("$1")/ei;
+   
+               #print "$suburbName: '$title' \$$priceLower id=$sourceID\n";
+               
+               if (($sourceID) && ($anchor))
+               {
+                  # check if the cache already contains this unique id
+                  # $_ is a reference to a hash
+                  if (!$advertisedSaleProfiles->checkIfTupleExists($sourceName, $sourceID, undef, $priceLower, undef))                              
+                  {   
+                     $printLogger->print("   parseSearchResults: adding anchor id ", $sourceID, "...\n");
+                     #$printLogger->print("   parseSearchList: url=", $sourceURL, "\n");          
+                     my $httpTransaction = HTTPTransaction::new($anchor, $url, $parentLabel.".".$sourceID);                  
+                
+                     push @urlList, $httpTransaction;
+                  }
+                  else
+                  {
+                     $printLogger->print("   parseSearchResults: id ", $sourceID , " in database. Updating last encountered field...\n");
+                     $advertisedSaleProfiles->addEncounterRecord($sourceName, $sourceID, undef);
+                  }
+               }
+               
+               $state = $SEEKING_NEXT_RESULT;
+               $parsedThisLine = 1;
+            }
+            
+            if ((!$parsedThisLine) && ($state == $SEEKING_NEXT_RESULT))
+            {
+               # searching for the start of the next result - possible outcomes are the
+               # start of the next result is found or the start of an advertisement is found
+               
+               if ($thisText eq $suburbName)
+               {
+                  $state = $PARSING_RESULT_TITLE;
+               }
+               $parsedThisLine = 1;
+            }
+            
+            #print "  END: state=$state: '$thisText' parsed=$parsedThisLine\n";
+            $recordsEncountered++;  # count records seen
+            # 23Jan05:save that this suburb has had some progress against it
+            $sessionProgressTable->reportProgressAgainstSuburb($threadID, 1);
+   
+         }      
+         $statusTable->addToRecordsEncountered($threadID, $recordsEncountered, $url);
+      }
+      else
+      {
+         $printLogger->print("   parseSearchResults: no exact matches found\n");
+         $ignoreNextButton = 1;
+      }
          
-         #print "  END: state=$state: '$thisText' parsed=$parsedThisLine\n";
-         $recordsEncountered++;  # count records seen
-         # 23Jan05:save that this suburb has had some progress against it
-         $sessionProgressTable->reportProgressAgainstSuburb($threadID, 1);
-
-      }      
-      $statusTable->addToRecordsEncountered($threadID, $recordsEncountered, $url);
-      
       # now get the anchor for the NEXT button if it's defined 
       
       $htmlSyntaxTree->resetSearchConstraints();
@@ -707,8 +717,9 @@ sub parseRealEstateSearchResults
       $htmlSyntaxTree->setSearchEndConstraintByText("property details");
       
       $anchor = $htmlSyntaxTree->getNextAnchorContainingPattern("Next");
-               
-      if ($anchor)
+           
+      # ignore the next button if it's only for related results
+      if (($anchor) && (!$ignoreNextButton))
       {            
          $printLogger->print("   parseSearchResults: list includes a 'next' button anchor...\n");
          $httpTransaction = HTTPTransaction::new($anchor, $url, $parentLabel);                  
