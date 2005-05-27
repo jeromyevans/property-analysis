@@ -35,6 +35,8 @@
 #   componentOf relationships in the workingView
 #  19 January 2005 - added support for the StatusTable
 #  13 March 2005 - added maintenance task for generating suburbAnalysisTable
+#  20 May 2005   - modified to use AdvertisedPropertyProfiles (Common code for rental and sale records) 
+#
 # To do:
 #
 #  RUN PARSERS IN A SEPARATE PROCESS | OR RUN DECODER (eg. htmlsyntaxtree) in separate process - need way to pass data in and out of the
@@ -61,13 +63,10 @@ use AdvertisedPropertyProfiles;
 use AgentStatusServer;
 use PropertyTypes;
 use WebsiteParser_Common;
-use WebsiteParser_REIWASales;
-use WebsiteParser_DomainSales;
-use WebsiteParser_REIWARentals;
+use WebsiteParser_REIWA;
 use WebsiteParser_REIWASuburbs;
-use WebsiteParser_RealEstateSales;
-use WebsiteParser_DomainRentals;
-use WebsiteParser_RealEstateRentals;
+use WebsiteParser_RealEstate;
+use WebsiteParser_Domain;
 use DomainRegions;
 use Validator_RegExSubstitutes;
 use MasterPropertyTable;
@@ -96,20 +95,18 @@ if (($parseSuccess) && (!($parameters{'command'} =~ /maintenance/i)))
    }            
    
    # initialise the objects for communicating with database tables
-   ($sqlClient, $advertisedSaleProfiles, $advertisedRentalProfiles, $propertyTypes, $suburbProfiles, $domainRegions, 
-      $originatingHTML, $validator_RegExSubstitutes, $masterPropertyTable) = initialiseTableObjects();
+   ($sqlClient, $advertisedPropertyProfiles, $propertyTypes, $suburbProfiles, $domainRegions, 
+       $validator_RegExSubstitutes, $masterPropertyTable) = initialiseTableObjects();
  
    # enable logging to disk by the SQL client
    #$sqlClient->enableLogging($parameters{'instanceID'});
    $sqlClient->connect();
    
    # hash of table objects - the key's are only significant to the local callback functions   
-   $myTableObjects{'advertisedSaleProfiles'} = $advertisedSaleProfiles;
-   $myTableObjects{'advertisedRentalProfiles'} = $advertisedRentalProfiles;
+   $myTableObjects{'advertisedPropertyProfiles'} = $advertisedPropertyProfiles;
    $myTableObjects{'propertyTypes'} = $propertyTypes;
    $myTableObjects{'suburbProfiles'} = $suburbProfiles;
    $myTableObjects{'domainRegions'} = $domainRegions;
-   $myTableObjects{'originatingHTML'} = $originatingHTML;
    $myTableObjects{'validator_RegExSubstitutes'} = $validator_RegExSubstitutes;
    $myTableObjects{'masterPropertyTable'} = $masterPropertyTable;
    
@@ -119,31 +116,27 @@ if (($parseSuccess) && (!($parameters{'command'} =~ /maintenance/i)))
    # depending on the command specified, initialise HTML parsers
    if ($parameters{'config'} =~ /REIWAsales/i)
    {
-      $myParsers{"searchdetails"} = \&parseREIWASalesSearchDetails;
-      $myParsers{"search.cfm"} = \&parseREIWASalesSearchForm;
-      $myParsers{"content-home"} = \&parseREIWASalesHomePage;
-      $myParsers{"searchquery"} = \&parseREIWASalesSearchQuery;
-      $myParsers{"searchlist"} = \&parseREIWASalesSearchList;
+      $myParsers{"Lst-ResSale-View.cfm"} = \&parseREIWASearchDetails;
+      $myParsers{"Lst-ResSale-List.cfm\$"} = \&parseREIWASearchForm;
+      $myParsers{"Action=SEARCH"} = \&parseREIWASearchList;
    }
    else
    {
       if ($parameters{'config'} =~ /Domainsales/i)
       {
-         $myParsers{"advancedsearch"} = \&parseDomainSalesChooseState;
+         $myParsers{"advancedsearch"} = \&parseDomainChooseState;
          $myParsers{"ChooseRegions"} = \&parseDomainSalesChooseRegions;
-         $myParsers{"ChooseSuburbs"} = \&parseDomainSalesChooseSuburbs;   
-         $myParsers{"SearchResults"} = \&parseDomainSalesSearchResults;   
-         $myParsers{"PropertyDetails"} = \&parseDomainSalesPropertyDetails;
+         $myParsers{"ChooseSuburbs"} = \&parseDomainChooseSuburbs;   
+         $myParsers{"SearchResults"} = \&parseDomainSearchResults;   
+         $myParsers{"PropertyDetails"} = \&parseDomainPropertyDetails;
       }
       else
       {
          if ($parameters{'config'} =~ /REIWArentals/i)
          {
-            $myParsers{"searchdetails"} = \&parseREIWARentalsSearchDetails;
-            $myParsers{"search.cfm"} = \&parseREIWARentalsSearchForm;
-            $myParsers{"content-home"} = \&parseREIWARentalsHomePage;
-            $myParsers{"searchquery"} = \&parseREIWARentalsSearchQuery;
-            $myParsers{"searchlist"} = \&parseREIWARentalsSearchList;
+             $myParsers{"Lst-ResRent-View.cfm"} = \&parseREIWASearchDetails;
+             $myParsers{"Lst-ResRent-List.cfm\$"} = \&parseREIWASearchForm;
+             $myParsers{"Action=SEARCH"} = \&parseREIWASearchList;
          }
          else
          {
@@ -167,27 +160,28 @@ if (($parseSuccess) && (!($parameters{'command'} =~ /maintenance/i)))
                {
                   if ($parameters{'config'} =~ /DomainRentals/i)
                   {
-                     $myParsers{"advancedsearch"} = \&parseDomainRentalChooseState;
+                     $myParsers{"advancedsearch"} = \&parseDomainChooseState;
                      $myParsers{"ChooseRegions"} = \&parseDomainRentalChooseRegions;
-                     $myParsers{"ChooseSuburbs"} = \&parseDomainRentalChooseSuburbs;   
-                     $myParsers{"SearchResults"} = \&parseDomainRentalSearchResults;   
-                     $myParsers{"PropertyDetails"} = \&parseDomainRentalPropertyDetails;
+                     $myParsers{"ChooseSuburbs"} = \&parseDomainChooseSuburbs;   
+                     $myParsers{"SearchResults"} = \&parseDomainSearchResults;   
+                     $myParsers{"PropertyDetails"} = \&parseDomainPropertyDetails;
                   }
                   else
                   {
                      if ($parameters{'config'} =~ /RealEstateRentals/i)
                      {
-                        $myParsers{"rsearch?a=sf&"} = \&parseRealEstateRentalsSearchForm;
-                        $myParsers{"rsearch?a=s&"} = \&parseRealEstateRentalsSearchResults;
-                        $myParsers{"rsearch?a=d&"} = \&parseRealEstateRentalsSearchResults;
-                        $myParsers{"rsearch?a=o&"} = \&parseRealEstateRentalsSearchDetails;
+                        $myParsers{"rsearch?a=sf&"} = \&parseRealEstateSearchForm;
+                        $myParsers{"rsearch?a=s&"} = \&parseRealEstateSearchResults;
+                        $myParsers{"rsearch?a=d&"} = \&parseRealEstateSearchResults;
+                        $myParsers{"rsearch?a=o&"} = \&parseRealEstateSearchDetails;
                      }
                      else              
                      {
                         if ($parameters{'config'} =~ /Test/i)
                         {
-                           $myParsers{"SearchResults"} = \&parseDomainSalesSearchResults;   
+                           $myParsers{"SearchResults"} = \&parseDomainSearchResults;   
                            $myParsers{"rsearch"} = \&parseRealEstateSearchResults;
+                           $myParsers{"PropertyDetails"} = \&parseDomainPropertyDetails;
                         }
                      }
                   }
@@ -290,16 +284,14 @@ sub initialiseTableObjects
 {
    my $sqlClient = SQLClient::new(); 
     
-   my $advertisedRentalProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Rentals');
-   my $advertisedSaleProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Sales');
+   my $advertisedPropertyProfiles = AdvertisedPropertyProfiles::new($sqlClient);
    my $propertyTypes = PropertyTypes::new($sqlClient);
    my $suburbProfiles = SuburbProfiles::new($sqlClient);
    my $domainRegions = DomainRegions::new($sqlClient);
-   my $originatingHTML = OriginatingHTML::new($sqlClient);
    my $validator_RegExSubstitutes = Validator_RegExSubstitutes::new($sqlClient);
    my $masterPropertyTable = MasterPropertyTable::new($sqlClient);
 
-   return ($sqlClient, $advertisedSaleProfiles, $advertisedRentalProfiles, $propertyTypes, $suburbProfiles, $domainRegions, $originatingHTML, $validator_RegExSubstitutes, $masterPropertyTable);
+   return ($sqlClient, $advertisedPropertyProfiles, $propertyTypes, $suburbProfiles, $domainRegions, $validator_RegExSubstitutes, $masterPropertyTable);
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -309,14 +301,7 @@ sub doMaintenance
    my $printLogger = shift;   
    my $parametersRef = shift;
    my $actionOk = 0;
-   
-   my $sqlClient = SQLClient::new(); 
-   my $advertisedSaleProfiles = AdvertisedPropertyProfiles::new($sqlClient, 'Sales');
-   my $propertyTypes = PropertyTypes::new($sqlClient);
-   
-   my $targetSQLClient = SQLClient::new($$parametersRef{'database'});
-   my $targetAdvertisedSaleProfiles = AdvertisedPropertyProfiles::new($targetSQLClient, 'Sales');
-  
+      
    if ($$parametersRef{'action'} =~ /tidysale/i)
    {
       $printLogger->print("---Performing Maintenance - Tidy Sales---\n");

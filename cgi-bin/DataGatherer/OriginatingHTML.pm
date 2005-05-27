@@ -17,7 +17,14 @@
 # 21 Apr 2005 - modified saveHTMLContent to prefix each file with a header that identifies the source and timestamp
 #   This information is needed for reconstruction from the originatingHTML file
 # 22 Apr 2005 - added override basepath function for setting where to output originatingHTML files (used for recovery)
-#
+# 23 May 2005 - changed createdBy field in AdvertisedPropertyProfiles to originatingHTML
+#             - modified to use sqlClient->lastInsertID instead of a select to get identifier
+# 26 May 2005 - modified readHTMLContent to include an optional flag to specify that the header should be removed
+#   from the content.  This is used when upgrading the header format
+#             - modified saveHTMLContent to use a text based (sql TIMESTAMP) format instead of unixtime - it provides
+#   better visual comparison to the database
+#             - modified saveHTMLContent to place url and timestamp in single quotes
+#             - modified addRecord to allow the timestamp to be specified
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -141,6 +148,7 @@ sub addRecord
 
 {
    my $this = shift;
+   my $timestamp = shift;
    my $foreignIdentifier = shift;
    my $url = shift;
    my $htmlSyntaxTree = shift;
@@ -164,7 +172,8 @@ sub addRecord
       $index = 0;
       $quotedUrl = $sqlClient->quote($url);
       $quotedForeignIdentifier = $sqlClient->quote($foreignIdentifier);
-      $appendString = "localtime(), null, $quotedUrl, $quotedForeignIdentifier)";
+      $quotedTimestamp = $sqlClient->quote($timestamp);
+      $appendString = "$quotedTimestamp, null, $quotedUrl, $quotedForeignIdentifier)";
 
       $statementText = $statementText.$appendString;
       
@@ -173,20 +182,16 @@ sub addRecord
       if ($sqlClient->executeStatement($statement))
       {
          $success = 1;
-         
-         # get the identifier of the record that was just created (the primary key)
-         @selectResults = $sqlClient->doSQLSelect("select identifier from OriginatingHTML where CreatesRecord = $quotedForeignIdentifier");
-         
-         # only one result should be returned - if there's more than one, then we have a problem, to avoid it always take
-         # the most recent entry which is the last in the list due to the 'order by' command
-         $lastRecordHashRef = $selectResults[$#selectResults];
-         $identifier = $$lastRecordHashRef{'identifier'};
+       
+         # 25 May 2005 - use lastInsertID to get the primary key identifier of the record just inserted
+         $identifier = $sqlClient->lastInsertID();
+                  
          if ($identifier >= 0)
          {
             #print "altering foreign key in $foreignTableName identifier=$foreignIdentifier createdBy=$identifier\n";
             # alter the foreign record - add this primary key as the CreatedBy foreign key - completing the relationship
             # between the two tables (in both directions)
-            $sqlClient->alterForeignKey($foreignTableName, 'identifier', $foreignIdentifier, 'createdBy', $identifier);
+            $sqlClient->alterForeignKey($foreignTableName, 'identifier', $foreignIdentifier, 'originatingHTML', $identifier);
             
             $timeStamp = time();
             
@@ -343,8 +348,8 @@ sub saveHTMLContent ($ $ $ $)
    if (($timeStamp) && ($sourceURL))
    {
       $header = "<!---- OriginatingHTML -----\n".
-                "sourceurl=$sourceURL\n".
-                "localtime=$timeStamp\n".
+                "sourceurl='$sourceURL'\n".
+                "localtime='$timeStamp'\n".
                 "--------------------------->\n";
       $writeHeader = 1;
    }
@@ -370,7 +375,7 @@ sub saveHTMLContent ($ $ $ $)
 #
 # Parameters:
 #  integer identifier (primary key of the OriginatingHTML)
-#
+#  optional integer flag stripHeader - if set, the OriginatingHTML header is removed from the content
 # Constraints:
 #  nil
 #
@@ -384,9 +389,12 @@ sub readHTMLContent
 {
    my $this = shift;
    my $identifier = shift;
+   my $stripHeader = shift;
    my $fileName = $identifier.".html";
    my @body;
    my $content = undef;
+   my $SEEKING_HEADER = 0;
+   my $IN_HEADER = 1;
    
    $sourcePath = $this->targetPath($identifier);
    $lineNo = 0;
@@ -396,9 +404,49 @@ sub readHTMLContent
       # read the content.
       while (<SESSION_FILE>)
       {
-         # add this line to the header section of the transaction
-         $body[$lineNo] = $_;
-         $lineNo++;
+         $thisLine = $_;
+         $skipThisLine = 0;
+         
+         # originating HTML header processing
+         if ($stripHeader)
+         {
+            if ($lineNo < 10)
+            {
+               $line = $thisLine;
+               chomp $line;
+               if ($state == $SEEKING_HEADER)
+               {
+                  if ($line =~ /OriginatingHTML/gi)
+                  {
+                     $state = $IN_HEADER;
+                     $skipThisLine = 1;
+                  }
+               }
+               
+               if ($state == $IN_HEADER)
+               {
+                  if ($line =~ /sourceurl=/gi)
+                  {
+                     $skipThisLine = 1;
+                  }
+                  elsif ($line =~ /localtime=/gi)
+                  {
+                     $skipThisLine = 1;
+                  }
+                  elsif ($line =~ /---\>/gi)
+                  {
+                     $skipThisLine = 1;
+                     $state = $SEEKING_HEADER;
+                  }
+               }
+            }
+         }
+         if (!$skipThisLine)
+         {  
+            # add this line to the content
+            $body[$lineNo] = $_;
+            $lineNo++;
+         }
       }
       
       if ($lineNo > 0)

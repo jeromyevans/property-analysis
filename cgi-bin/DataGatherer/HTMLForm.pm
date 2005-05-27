@@ -27,6 +27,8 @@
 # 6 Oct 2004 - To support the above problem, also had to change postParameters to a list of hashes instead of a hash
 #   as the keys have multiple instances in certain cases.  This may make the internal variable to maintain
 #   order redundant, but not sure yet.
+# 25 May 2005 - added function overrideAction to set the action for the form.  Only necessary if the from
+# uses javascript to modify the action onsubmit
 #
 # CONVENTIONS
 # _ indicates a private variable or method
@@ -353,6 +355,30 @@ sub getName
 }
 
 # -------------------------------------------------------------------------------------------------
+# overrideAction
+#
+# Purpose:
+#  overrides the action defined for this form with a new destination
+#
+# Parameters:
+#  string newurl
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   string name
+#
+sub overrideAction
+{
+   my $this = shift;
+   my $action = shift;
+   
+   $this->{'action'} = $action;                  
+}
+
+
+# -------------------------------------------------------------------------------------------------
 # getAction
 #
 # Purpose:
@@ -373,6 +399,7 @@ sub getAction
                   
    return $this->{'action'};      
 }
+
 
 # -------------------------------------------------------------------------------------------------
 

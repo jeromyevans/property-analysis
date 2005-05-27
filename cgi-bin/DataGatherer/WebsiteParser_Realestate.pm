@@ -16,6 +16,9 @@
 #  in the table.  Should prevent procesing of suburbs more than once if the server returns the same suburb under
 #  multiple searches.  Note: completed indicates the propertylist has been parsed, not necessarily all the details.
 #  25 April  2005   - modified parsing of search results to ignore 'related results' returned by the search engine
+#  24 May 2005      - major change to support new AdvertisedPropertyProfiles table that combines rental and sale 
+#  advertisements and perform less processing of the source data before entry
+
 # ---CVS---
 # Version: $Revision$
 # Date: $Date$
@@ -108,7 +111,7 @@ sub parseRealEstateDisplayResponse
 # Returns:
 #   hash containing the suburb profile.
 #      
-sub extractRealEstateSaleProfile
+sub extractRealEstateProfile
 {
    my $documentReader = shift;
    my $htmlSyntaxTree = shift;
@@ -124,203 +127,129 @@ sub extractRealEstateSaleProfile
    my $SEEKING_DESCRIPTION   = 7;
    my $APPENDING_DESCRIPTION = 8;
 
-   my %saleProfile;   
- #  print "   inExtractSaleProfile:\n";
-   # --- set start contraint to Print to get the first line of text (id, suburb, price)
- 
-   # --- set start constraint to the 3rd table (table 2) on the page - this is table
-   # --- across the top that MAY contain a title and description
+   my %propertyProfile;  
+   my $printLogger = $documentReader->getGlobalParameter('printLogger');
 
-   # a state machine is used for thie page as it's unstructured (it just flows)
+   my $tablesRef = $documentReader->getTableObjects();
+   my $sqlClient = $documentReader->getSQLClient();
+   
+   my $saleOrRentalFlag = -1;
+   my $sourceName = undef;
+   my $state = undef;
+   
+   # first, locate the pattern that identifies the source of the record as RealEstate.com
+   # 20 May 05
+   if ($htmlSyntaxTree->containsTextPattern("realestate\.com\.au"))
+   {
+      $sourceName = 'RealEstate';
+   }
+   
+   if ($sourceName) 
+   {
+      $propertyProfile{'SourceName'} = $sourceName;
+   }
+  
+   $htmlSyntaxTree->setSearchStartConstraintByText("Search Results");
+   $htmlSyntaxTree->setSearchEndConstraintByText("Property No"); 
+   
+   # second, locate the pattern that identifies this as a SALE record or RENT record
+   # 20 May 05
+   if ($htmlSyntaxTree->containsTextPattern("Homes For Sale"))
+   {
+      $saleOrRentalFlag = 0;
+   }
+   else
+   {
+      # locate the pattern that identifies this as a RENTAL record
+      if ($htmlSyntaxTree->containsTextPattern("Homes For Rent"))
+      {
+         $saleOrRentalFlag = 1;
+      }
+   }
+   
+   $propertyProfile{'SaleOrRentalFlag'} = $saleOrRentalFlag;
+
+   $htmlSyntaxTree->resetSearchConstraints();
+   # third, locate the STATE for the property 
+   # This needs to be obtained from one of the URLs in the page
+   $anchorList = $htmlSyntaxTree->getAnchorsContainingPattern("Back to Search Results");
+   $backURL = $$anchorList[0];
+   if ($backURL)
+   {
+      # the state follows the state= parameter in the URL
+      # matched pattern is returned in $1;
+      $backURL =~ /\&s=(\w*)\&/gi;
+      $stateName=$1;
+
+      # convert to uppercase as it's used in an index in the database
+      $stateName =~ tr/[a-z]/[A-Z]/;
+   }
+   
+   if ($stateName)
+   {
+      $propertyProfile{'State'} = $stateName;
+   }
+   
+   # --- extract the suburb name (cheat- use the parent label ---
    
    @splitLabel = split /\./, $parentLabel;
-   $suburb = $splitLabel[$#splitLabel-1];  # extract the suburb name from the parent label   
-#print "SUBURB=$suburb\n";         
-   $htmlSyntaxTree->setSearchStartConstraintByText("Back to Search Results");
-   $htmlSyntaxTree->setSearchEndConstraintByTag('hr'); # until the horizontal line
-      
-   $state = $SEEKING_START;
-   $endOfRecord = 0;
-   while (!$endOfRecord)
+   $suburb = $splitLabel[$#splitLabel-1];  # extract the suburb name from the parent label
+
+   if ($suburb) 
    {
-      # state machine for processing the list of results
-      $parsedThisLine = 0;
-      $thisText = $htmlSyntaxTree->getNextText();
-      if (!$thisText)
-      {
-         # not set - at the end of the list - exit the state machine
-         $parsedThisLine = 1;
-         $endOfRecord = 1;
-      }
-  #    print("START: state=$state: '$thisText' parsed=$parsedThisLine\n");
-      
-      if ((!$parsedThisLine) && ($state == $SEEKING_START))
-      {
-         if ($thisText =~ /\D/gi)   # if it contains a non-digit...
-         {
-            #print "'$thisText' contains non digit...\n";
-            if ($thisText =~ /Next/i)
-            {
-               # still processing the stuff before the title
-               #print "   ignoring '$thisText'\n";
-               $parsedThisLine = 1;
-               $state = $SEEKING_START;
-            }
-            else
-            {
-               #print "   this line is title '$thisText'\n";
-               $state = $SEEKING_TITLE;  # line not parsed yet
-            }
-         }
-         else
-         {
-            # bedrooms, bathrooms or carspaces
-             #print "   ignoring number '$thisText'\n";
-            $parsedThisLine = 1;
-         }
-      }
-      
-      if ((!$parsedThisLine) && ($state == $SEEKING_TITLE))
-      {
-         $title = $thisText;   # always set
- #        print "TITLE=$title\n";
-         $state = $SEEKING_SUBTITLE;
-         $parsedThisLine = 1;
-      }
-      
-      if ((!$parsedThisLine) && ($state == $SEEKING_SUBTITLE))
-      {
-         # optionally set to the price, or AUCTION or UNDER OFFER or SOLD
-         
-         if ($thisText =~ /UNDER|SOLD/gi)
-         {
-            $state = $SEEKING_PRICE;
-            $parsedThisLine = 1;
-         }
-         else
-         {
-            if ($thisText =~ /Auction/gi)
-            {
-               # price is not set for auctions
-               $priceLower = undef;
-               $state = $SEEKING_ADDRESS;
-               $parsedThisLine = 1;
-            }
-            else
-            { 
-                $state = $SEEKING_PRICE;
-                # don't set the parsed this line flag - keep processing
-            }
-         }
-      }
-        
-      if ((!$parsedThisLine) && ($state == $SEEKING_PRICE))
-      {
- #        print "priceString = $thisText\n";
-         if ($thisText =~ /\$/gi)  # check if this line contains a price
-         {
-            ($priceLower, $priceUpper) = split(/-/, $thisText, 2);
-            if ($priceLower)
-            {
-               $priceLower = $documentReader->parseNumberSomewhereInString($priceLower);  # may be set to undef
-            }
-            if ($priceUpper)
-            {
-               $priceUpper = $documentReader->parseNumberSomewhereInString($priceUpper);  # may be set to undef
-            }
- #           print "priceLower = $priceLower\n";
-
-            $state = $SEEKING_ADDRESS;
-            $parsedThisLine = 1;
-         }
-         else
-         {
-            $priceLower = undef;
-            $priceUpper = undef;
-            # maybe there's no price and instead this line is the address - don't set parsedLine flag
-            $state = $SEEKING_ADDRESS;
-         }
-      }
-      
-      if ((!$parsedThisLine) && ($state == $SEEKING_ADDRESS))
-      {
-         $addressString = $thisText;
-
-         # the address always contains the suburb as the last word[s]
-         $addressString =~ s/$suburb$//i;
-#print "ADDRESSSTRING='$addressString'\n";         
-         $street= undef;
-         $streetNumber = undef;
-         @wordList = split(/ /, $addressString);   # parse one word at a time 
-         # the street number and street can be a variable number of words.  It's very annony to split.
-         # best method seems to be to allocate all words LEFT of (and including) a numeral to the number, and the
-         # balance to the street name
-         # note: if no numerals are encountered, then the entire string is street name
-         # TO DO: an improvement may be to look for recognised 'street types'
-         $index = 0;
-         $lastNumeralWord = -1;
-         $length = @wordList;
-         foreach (@wordList)
-         {
-            if ($_)
-            {
-               # if this word contains a numeral
-               if ($_ =~ /[0-9]/)
-               {
-                  $lastNumeralWord = $index;
-               }
-            }
-            $index++;
+      $propertyProfile{'SuburbName'} = $suburb;
+   }     
+   
+   # --- extract the address string ---
+   $htmlSyntaxTree->resetSearchConstraints();
+   $htmlSyntaxTree->setSearchStartConstraintByTag("address");
+   $htmlSyntaxTree->setSearchEndConstraintByTag('/address'); 
+   $addressString = $htmlSyntaxTree->getNextText();
+   
+   # the address always contains the suburb as the last word[s]
+   $addressString =~ s/$suburb$//i;
             
-         }
-         #print "lastNumeralAt $lastNumeralWord\n";
-         if ($lastNumeralWord >= 0)
-         {
-            for ($index = 0; $index <= $lastNumeralWord; $index++)
-            {
-               $streetNumber .= $wordList[$index]." ";
-            }
-            
-            # place the balance of the word list into the street name
-            for ($index = $lastNumeralWord+1; $index < $length; $index++)
-            {
-               $street .= $wordList[$index]." ";
-            }
-         }
-         else
-         {
-            # no street number encountered - allocate entirely to street name
-            $street = $addressString;
-         }
-         
-         $streetNumber = $documentReader->trimWhitespace($streetNumber);
-         $street = $documentReader->trimWhitespace($street);
-
-         
-         $state = $SEEKING_DESCRIPTION;
-         $parsedThisLine = 1;
-      }
-      
-      
-      if ((!$parsedThisLine) && ($state == $SEEKING_DESCRIPTION))
-      {
-         $description = $thisText;
-         
-         $state = $APPENDING_DESCRIPTION;
-         $parsedThisLine = 1;
-      }
-      
-      if ((!$parsedThisLine) && ($state == $APPENDING_DESCRIPTION))
-      {
-         $description .= " ".$thisText;
-         
-         $state = $APPENDING_DESCRIPTION;
-         $parsedThisLine = 1;
-      }
-            
-      #print "  END: state=$state: '$thisText' parsed=$parsedThisLine\n";
+   if ($addressString) 
+   {
+      $propertyProfile{'StreetAddress'} = $addressString;
    }
-
+   
+   # --- extract the price string ---
+   $htmlSyntaxTree->resetSearchConstraints();
+   $htmlSyntaxTree->setSearchStartConstraintByTagAndClass("span", "lg-dppl-bold");
+   $htmlSyntaxTree->setSearchEndConstraintByTag('/span'); 
+   $priceString = $htmlSyntaxTree->getNextText();
+   
+   if ($priceString) 
+   {
+      $propertyProfile{'AdvertisedPriceString'} = $documentReader->trimWhitespace($priceString);
+   }
+   
+   # --- for realestate.com.au the titleString is the same as the priceString --- 
+   $titleString = $priceString;
+   if ($titleString) 
+   {
+      $propertyProfile{'TitleString'} = $documentReader->trimWhitespace($titleString);
+   }
+   
+   # --- extract the description ---
+   $htmlSyntaxTree->resetSearchConstraints();
+   $htmlSyntaxTree->setSearchStartConstraintByTagAndClass("div", "description");
+   $htmlSyntaxTree->setSearchEndConstraintByTag('/div');
+   
+   # may be multiple lines - get all text and append it
+   $description = "";
+   while ($nextLine = $htmlSyntaxTree->getNextText())
+   {
+      $description = $description . " " . $nextLine;
+   }
+      
+   if ($description)
+   {
+      $propertyProfile{'Description'} = $documentReader->trimWhitespace($description);
+   }
+   
+   # --- extact other attributes ---
    $htmlSyntaxTree->resetSearchConstraints();
    $htmlSyntaxTree->setSearchStartConstraintByText("Property Overview");
    $htmlSyntaxTree->setSearchEndConstraintByTag("Show Visits"); # until the next table
@@ -328,8 +257,8 @@ sub extractRealEstateSaleProfile
    $type = $htmlSyntaxTree->getNextTextAfterPattern("Category:");             # always set
    $bedrooms = $htmlSyntaxTree->getNextTextAfterPattern("Bedrooms:");    # sometimes undef  
    $bathrooms = $htmlSyntaxTree->getNextTextAfterPattern("Bathrooms:");       # sometimes undef
-   $land = $documentReader->strictNumber($htmlSyntaxTree->getNextTextAfterPattern("Land:"));      # sometimes undef
-   $yearBuilt = $htmlSyntaxTree->getNextTextAfterPattern("Year:");      # sometimes undef
+   $land = $htmlSyntaxTree->getNextTextAfterPattern("Land:");      # sometimes undef
+#   $yearBuilt = $htmlSyntaxTree->getNextTextAfterPattern("Year:");      # sometimes undef
    $features = $htmlSyntaxTree->getNextTextAfterPattern("Features:");      # sometimes undef
 
    $htmlSyntaxTree->resetSearchConstraints();
@@ -337,81 +266,103 @@ sub extractRealEstateSaleProfile
    $htmlSyntaxTree->setSearchEndConstraintByTag("Back to Search Results"); # until the next table
    $sourceIDString = $htmlSyntaxTree->getNextTextContainingPattern("Property No");     
    $sourceID = $documentReader->parseNumberSomewhereInString($sourceIDString);
-   
-   # ------ now parse the extracted values ----
-         
-   $saleProfile{'SourceID'} = $sourceID;      
-   
-   if ($suburb) 
+            
+   if ($sourceID)
    {
-      $saleProfile{'SuburbName'} = $suburb;
-   }
+      $propertyProfile{'SourceID'} = $sourceID;
+   }      
    
-   if ($priceUpper) 
-   {
-      $saleProfile{'AdvertisedPriceUpper'} = $documentReader->parseNumber($priceUpper);
-   }
    
-   if ($priceLower) 
-   {
-      $saleProfile{'AdvertisedPriceLower'} = $documentReader->parseNumber($priceLower);
-   }
-      
    if ($type)
    {
-      $saleProfile{'Type'} = $type;
+      $propertyProfile{'Type'} = $type;
    }
+   
    if ($bedrooms)
    {
-      $saleProfile{'Bedrooms'} = $documentReader->parseNumber($bedrooms);
+      $propertyProfile{'Bedrooms'} = $documentReader->parseNumber($bedrooms);
    }
+   
    if ($bathrooms)
    {
-      $saleProfile{'Bathrooms'} = $documentReader->parseNumber($bathrooms);
+      $propertyProfile{'Bathrooms'} = $documentReader->parseNumber($bathrooms);
    }
+   
    if ($land)
    {
-      $saleProfile{'Land'} = $documentReader->parseNumber($land);
+      $propertyProfile{'LandArea'} = $land;
    }
+   
+   # --- extract building area ---
+
+   if ($buidingArea)
+   {
+      $propertyProfile{'BuildingArea'} = $buildingArea;
+   }
+   
    if ($yearBuilt)
    {
-      $saleProfile{'YearBuilt'} = $documentReader->parseNumber($yearBuilt);
+      $propertyProfile{'YearBuilt'} = $yearBuilt;
    }    
-   
-   if ($streetNumber)
-   {
-      $saleProfile{'StreetNumber'} = $streetNumber;
-   }
-   if ($street)
-   {
-      $saleProfile{'Street'} = $street;
-   }
-   
-   if ($city)
-   {
-      $saleProfile{'City'} = $city;
-   }
-   
-   if ($zone)
-   {
-      $saleProfile{'Council'} = $zone;
-   }
-   
-   if ($description)
-   {
-      $saleProfile{'Description'} = $description;
-   }
    
    if ($features)
    {
-      $saleProfile{'Features'} = $features;
+      $propertyProfile{'Features'} = $features;
    }
-
-   $saleProfile{'State'} = $documentReader->getGlobalParameter('state');
-     
-  # DebugTools::printHash("SaleProfile", \%saleProfile);
-        
-   return %saleProfile;  
+   
+   # --- extract agent details ---- 
+   $htmlSyntaxTree->resetSearchConstraints();
+   $htmlSyntaxTree->setSearchStartConstraintByTagAndID('div', 'agentCollapsed');
+   $htmlSyntaxTree->setSearchEndConstraintByTag('/div');
+   
+   $fullURL = $htmlSyntaxTree->getNextAnchor();
+   $website = $fullURL;
+   $website =~ /to=(.*)/gi;
+   $website = $1;
+   $title = $htmlSyntaxTree->getNextText();
+   $agencyName = $htmlSyntaxTree->getNextText();
+   $contactNameAndNumber = $htmlSyntaxTree->getNextTextAfterPattern('Sales Person');
+   
+   ($contactName, $crud) = split /\d/, $contactNameAndNumber;
+   $contactName = $documentReader->trimWhitespace($contactName);
+   
+   $mobilePhone = $contactNameAndNumber;
+   # remove non-digits
+   $mobilePhone =~ s/\D//gi;
+   
+   $fullURL =~ /AgentWebSiteClick-(.*)\&to/gi;
+   $agencySourceID = $1;
+   
+   if ($agencySourceID)
+   {
+      $propertyProfile{'AgencySourceID'} = $agencySourceID;
+   }
+   
+   if ($agencyName)
+   {
+      $propertyProfile{'AgencyName'} = $agencyName;
+   }
+    
+   if ($contactName)
+   {
+      $propertyProfile{'ContactName'} = $contactName;
+   }
+   
+   if ($mobilePhone)
+   {
+      $propertyProfile{'MobilePhone'} = $mobilePhone;
+   }
+   
+   if ($website)
+   {
+      $propertyProfile{'Website'} = $website;
+   }
+   
+   populatePropertyProfileHash($sqlClient, $documentReader, \%propertyProfile);
+   
+   #DebugTools::printHash("PropertyProfile", \%propertyProfile);
+   
+   return \%propertyProfile;  
 }
 
 # -------------------------------------------------------------------------------------------------
@@ -449,11 +400,9 @@ sub parseRealEstateSearchDetails
    my $sqlClient = $documentReader->getSQLClient();
    my $tablesRef = $documentReader->getTableObjects();
    
-   my $advertisedSaleProfiles = $$tablesRef{'advertisedSaleProfiles'};
+   my $advertisedPropertyProfiles = $$tablesRef{'advertisedPropertyProfiles'};
    my $originatingHTML = $$tablesRef{'originatingHTML'};  # 27Nov04
 
-   my %saleProfiles;
-   my $checksum;   
    my $sourceName = $documentReader->getGlobalParameter('source');
    my $printLogger = $documentReader->getGlobalParameter('printLogger');
    $statusTable = $documentReader->getStatusTable();
@@ -462,44 +411,27 @@ sub parseRealEstateSearchDetails
    
    if ($htmlSyntaxTree->containsTextPattern("Property No"))
    {
-      # --- now extract the property information for this page ---
-      #if ($htmlSyntaxTree->containsTextPattern("Suburb Profile"))
-      #{
       # parse the HTML Syntax tree to obtain the advertised sale information
-      %saleProfiles = extractRealEstateSaleProfile($documentReader, $htmlSyntaxTree, $url, $parentLabel);
+      $propertyProfile = extractRealEstateProfile($documentReader, $htmlSyntaxTree, $url, $parentLabel);
 
-      tidyRecord($sqlClient, \%saleProfiles);        # 27Nov04 - used to be called validateProfile
-#       DebugTools::printHash("sale", \%saleProfiles);
-              
-      # calculate a checksum for the information - the checksum is used to approximately 
-      # identify the uniqueness of the data
-      $checksum = $documentReader->calculateChecksum(\%saleProfiles);
-            
-      $printLogger->print("   parseSearchDetails: extracted checksum = ", $checksum, ". Checking log...\n");
-             
       if ($sqlClient->connect())
       {		 	 
          # check if the log already contains this checksum - if it does, assume the tuple already exists                  
-         if ($advertisedSaleProfiles->checkIfTupleExists($sourceName, $saleProfiles{'SourceID'}, $checksum, $saleProfiles{'AdvertisedPriceLower'}))
+         if ($advertisedPropertyProfiles->checkIfProfileExists($propertyProfile))
          {
             # this tuple has been previously extracted - it can be dropped
             # record that it was encountered again
-            $printLogger->print("   parseSearchDetails: identical record already encountered at $sourceID.\n");
-            $advertisedSaleProfiles->addEncounterRecord($sourceName, $saleProfiles{'SourceID'}, $checksum);
+            $printLogger->print("   parseSearchDetails: identical record already encountered at $sourceName.\n");
+            $advertisedPropertyProfiles->addEncounterRecord($$propertyProfile{'SaleOrRentalFlag'}, $$propertyProfile{'SourceName'}, $$propertyProfile{'SourceID'}, $$propertyProfile{'Checksum'});
             $statusTable->addToRecordsParsed($threadID, 1, 0, $url);    
          }
          else
          {
             $printLogger->print("   parseSearchDetails: unique checksum/url - adding new record.\n");
             # this tuple has never been extracted before - add it to the database
-            $identifier = $advertisedSaleProfiles->addRecord($sourceName, \%saleProfiles, $url, $checksum, $instanceID, $transactionNo);
-            $statusTable->addToRecordsParsed($threadID, 1, 1, $url);    
+            $identifier = $advertisedPropertyProfiles->addRecord($propertyProfile, $url, $htmlSyntaxTree);
 
-            if ($identifier >= 0)
-            {
-               # 27Nov04: save the HTML file entry that created this record
-               $htmlIdentifier = $originatingHTML->addRecord($identifier, $url, $htmlSyntaxTree, "advertisedSaleProfiles");
-            }
+            $statusTable->addToRecordsParsed($threadID, 1, 1, $url);    
          }
       }
       else
@@ -566,6 +498,10 @@ sub parseRealEstateSearchResults
    my $recordsEncountered = 0;
    my $sessionProgressTable = $documentReader->getSessionProgressTable();   # 23Jan05
    my $ignoreNextButton = 0;
+   my $sqlClient = $documentReader->getSQLClient();
+   my $tablesRef = $documentReader->getTableObjects();
+   my $advertisedPropertyProfiles = $$tablesRef{'advertisedPropertyProfiles'};
+   my $saleOrRentalFlag = -1;
    
    # --- now extract the property information for this page ---
    $printLogger->print("inParseSearchResults ($parentLabel):\n");
@@ -577,10 +513,19 @@ sub parseRealEstateSearchResults
    #$htmlSyntaxTree->printText();
    if ($htmlSyntaxTree->containsTextPattern("Displaying"))
    {         
-            
       # if no exact matches are found the search engine sometimes returns related matches - these aren't wanted
       if (!$htmlSyntaxTree->containsTextPattern("No exact matches found"))
       {
+         # determine if these are RENT or SALE results
+         if ($htmlSyntaxTree->containsTextPattern("Homes for Sale"))
+         {
+            $saleOrRentalFlag = 0;
+         }
+         elsif (!$htmlSyntaxTree->containsTextPattern("Homes for Rent"))
+         {
+            $saleOrRentalFlag = 1;
+         }
+         
          $htmlSyntaxTree->setSearchStartConstraintByText("properties found");
          $htmlSyntaxTree->setSearchEndConstraintByText("Page:");
             
@@ -601,7 +546,7 @@ sub parseRealEstateSearchResults
             
             if ((!$parsedThisLine) && ($state == $SEEKING_FIRST_RESULT))
             {
-               # if this text is the suburb name, where in a new record
+               # if this text is the suburb name, we're in a new record
                if ($thisText =~ /$suburbName/i)
                {
                   $state = $PARSING_RESULT_TITLE;
@@ -644,11 +589,9 @@ sub parseRealEstateSearchResults
               
             if ((!$parsedThisLine) && ($state == $PARSING_PRICE))
             {
-               ($priceLower, $priceHiger) = split(/-/, $thisText, 2);
-               if ($priceLower)
-               {
-                  $priceLower = $documentReader->parseNumberSomewhereInString($priceLower);  # may be set to undef
-               }
+               # the titleString for RealEstate.com is the line with the price on it
+               $titleString = $thisText;
+                           
                $state = $PARSING_SOURCE_ID;
                $parsedThisLine = 1;
             }
@@ -665,7 +608,7 @@ sub parseRealEstateSearchResults
                {
                   # check if the cache already contains this unique id
                   # $_ is a reference to a hash
-                  if (!$advertisedSaleProfiles->checkIfTupleExists($sourceName, $sourceID, undef, $priceLower, undef))                              
+                  if (!$advertisedPropertyProfiles->checkIfResultExists($saleOrRentalFlag, $sourceName, $sourceID, $titleString))                              
                   {   
                      $printLogger->print("   parseSearchResults: adding anchor id ", $sourceID, "...\n");
                      #$printLogger->print("   parseSearchList: url=", $sourceURL, "\n");          
@@ -676,7 +619,7 @@ sub parseRealEstateSearchResults
                   else
                   {
                      $printLogger->print("   parseSearchResults: id ", $sourceID , " in database. Updating last encountered field...\n");
-                     $advertisedSaleProfiles->addEncounterRecord($sourceName, $sourceID, undef);
+                     $advertisedPropertyProfiles->addEncounterRecord($saleOrRentalFlag, $sourceName, $sourceID, undef);
                   }
                }
                
@@ -811,7 +754,6 @@ sub parseRealEstateSearchForm
     
    if ($htmlForm)
    {       
-                     
       # for all of the suburbs defined in the form, create a transaction to get it
       $optionsRef = $htmlForm->getSelectionOptions('u');
       $htmlForm->clearInputValue('is');   # clear checkbox selecting surrounding suburbs
@@ -1030,6 +972,75 @@ sub parseRealEstateSalesHomePage
       return @emptyList;
    }
 }
+
+
+# -------------------------------------------------------------------------------------------------
+# parseRealEstateRentalsHomePage
+# parses the htmlsyntaxtree to extract the link to the Advertised Sale page
+#
+# Purpose:
+#  construction of the repositories
+#
+# Parameters:
+#  DocumentReader
+#  HTMLSyntaxTree to use
+#  String URL
+#
+# Constraints:
+#  nil
+#
+# Updates:
+#  database
+#
+# Returns:
+#  a list of HTTP transactions or URL's.
+#    
+sub parseRealEstateRentalsHomePage
+
+{	
+   my $documentReader = shift;
+   my $htmlSyntaxTree = shift;
+   my $url = shift;         
+   my $instanceID = shift;   
+   my $transactionNo = shift;
+   my $threadID = shift;
+   my $parentLabel = shift;
+   
+   my $printLogger = $documentReader->getGlobalParameter('printLogger');
+   my @anchors;
+   
+   # --- now extract the property information for this page ---
+   $printLogger->print("inParseHomePage ($parentLabel):\n");
+   if ($htmlSyntaxTree->containsTextPattern("Real Estate Institute of Western Australia"))
+   {                                     
+      $anchor = $htmlSyntaxTree->getNextAnchorContainingPattern("Rental Profiles");
+      if ($anchor)
+      {
+         $printLogger->print("   following anchor 'Rental Profiles'...\n");
+      }
+      else
+      {
+         $printLogger->print("   anchor 'Rental Profiles' not found!\n");
+      }
+   }	  
+   else 
+   {
+      $printLogger->print("parseHomePage: pattern not found\n");
+   }
+   
+   # return a list with just the anchor in it
+   if ($anchor)
+   {
+      my $newHTTPTransaction = HTTPTransaction::new($anchor, $url, $parentLabel."sales");
+
+      return ($newHTTPTransaction);
+   }
+   else
+   {
+      return @emptyList;
+   }
+}
+
 
 # -------------------------------------------------------------------------------------------------
 

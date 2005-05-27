@@ -22,6 +22,9 @@
 #  determine if the suburbname was in the letter-range specified though parameters
 # 13 March 2005 - disabled use of PropertyTypes table (typeIndex) as it's being re-written to better support 
 #  analysis.  It actually performed no role here (the mapPropertyType function returned null in all cases).
+# 20 May 2005 - major update
+#             - added populatePropertyProfileHash that includes common code for populating the hash, then tidying it
+#  up and calculating the checksum.  This is needed for the re-architecting to combine sales and rentals.
 use PrintLogger;
 use CGI qw(:standard);
 use HTTPClient;
@@ -218,17 +221,17 @@ sub tidyRecord
    my $sqlClient = shift;
    my $profileRef = shift; 
    
-   # match the suburb name to a recognised suburb name
-   %matchedSuburb = matchSuburbName($sqlClient, $$profileRef{'SuburbName'}, $$profileRef{'State'});
-     
-   if (%matchedSuburb)
-   {
-      $$profileRef{'SuburbIndex'} = $matchedSuburb{'SuburbIndex'};
-      $$profileRef{'SuburbName'} = $matchedSuburb{'SuburbName'};
-   }
+   # state to uppercase
+   $$profileRef{'State'} =~ tr/[a-z]/[A-Z]/;
    
-   # validate property type
-#   $$profileRef{'TypeIndex'} = PropertyTypes::mapPropertyType($sqlClient, $$profileRef{'Type'});
+   # format the text using standard conventions to easy comparison later
+   $$profileRef{'SuburbName'} = prettyPrint($$profileRef{'SuburbName'}, 1);
+   
+   # type to lowercase
+   if (defined $$profileRef{'Type'})
+   {
+      $$profileRef{'Type'} =~ tr/[A-Z]/[a-z]/;
+   }
    
    # validate number of bedrooms
    if (($$profileRef{'Bedrooms'} > 0) || (!defined $$profileRef{'Bedrooms'}))
@@ -249,162 +252,35 @@ sub tidyRecord
    }
    
    # validate land area
-   if (($$profileRef{'Land'} > 0) || (!defined $$profileRef{'Land'}))
+   if (($$profileRef{'LandArea'} > 0) || (!defined $$profileRef{'LandArea'}))
    {
    }
    else
    {
-       delete $$profileRef{'Land'};
+       delete $$profileRef{'LandArea'};
    }
-      
-   # validate advertised price lower
-   if ((($$profileRef{'AdvertisedPriceLower'} > 0)) || (!defined $$profileRef{'AdvertisedPriceLower'}))
+   
+   # validate building area
+   if (($$profileRef{'BuildingArea'} > 0) || (!defined $$profileRef{'BuildingArea'}))
    {
    }
    else
    {
-       delete $$profileRef{'AdvertisedPriceLower'};
+       delete $$profileRef{'BuildingArea'};
+   }
+  
+   # yearbuilt to lowercase
+   if (defined $$profileRef{'YearBuilt'})
+   {
+      $$profileRef{'YearBuilt'} =~ tr/[A-Z]/[a-z]/;
    }
    
-   # validate advertised price upper
-   if ((($$profileRef{'AdvertisedPriceUpper'} > 0)) || (!defined $$profileRef{'AdvertisedPriceUpper'}))
+   # pricestring to lowercase
+   $$profileRef{'AdvertisedPriceString'} =~ tr/[A-Z]/[a-z]/;
+     
+   if (defined $$profileRef{'StreetAddress'})
    {
-   }
-   else
-   {
-       delete $$profileRef{'AdvertisedPriceUpper'};
-   }
-   
-   # validate advertised weekly rent
-   if ((($$profileRef{'AdvertisedWeeklyRent'} > 0)) || (!defined $$profileRef{'AdvertisedWeeklyRent'}))
-   {
-   }
-   else
-   {
-       delete $$profileRef{'AdvertisedWeeklyRent'};
-   }
-   
-   # ---
-   # attempt to remove phone numbers and personal details from the description
-   #  - a  phone number is 8 to 10 digits.  It may contain zero or more whitespaces between each digit, but nothing else
-   $description = $$profileRef{'Description'};
-   #if ($description =~ /0(\s*){8,10}/g)
-   if ($description =~ /(\d(\s*)){8,10}/g)
-   {
-      # there is a phone number in the message - delete the entire sentance containing the phone number
-      # split into sentances...
-      @sentanceList = split /[\.|\?|\!\*]/, $$profileRef{'Description'};
-      $index = 0;
-      # loop through each sentance looking for the pattern
-      foreach (@sentanceList)
-      {
-         # if this sentance contains a phone number...
-         if ($_ =~ /(\d(\s*)){8,10}/g)
-         {
-            # reject this sentance as it contains the pattern
-            #BUGFIX 13 September 2004 - need to escape the sentance before it's included in the
-            # regular expression as some characters can break the expression
-            # - escape regular expression characters
-            $sentanceList[$index] =~ s/(\(|\)|\?|\.|\*|\+|\^|\{|\}|\[|\]|\|)/\\$1/g;
-            
-            $description =~ s/($sentanceList[$index])([\.|\?|\!\*]*)//g;
-         }
-         $index++;
-      }         
-   }
-   $$profileRef{'Description'} = $description;
-   
-   # do another parse of the description to remove phone numbers if a sentance couldn't be identified - replace the number with a blank
-   $$profileRef{'Description'} =~ s/(\d(\s*)){8,10}//g;
-   
-   #---
-   # now, search the description for information not provided explicitly in the fields - look for landArea in sqm in the text
-   if (!defined $$profileRef{'Land'})
-   {
-      # determine if the description contains 'sqm' or a variation of that
-      #  look for 1 or more digits followed by 0 or more spaces then SQM
-      if ($$profileRef{'Description'} =~ /\d+(\s*)sqm/i)
-      {
-         $description = $$profileRef{'Description'};
-         # this expression extracts the sqm number out into $2 and assigns it to $landArea 
-         # the 'e' modified ensures the second expresion is executed
-         $description =~ s/((\d+)(\s*)sqm)/$landArea = sprintf("$2")/ei;         
-      } 
-      
-      if ((defined $landArea) && ($landArea > 0))
-      {
-         # assign the land area specified in the description
-         $$profileRef{'Land'} = $landArea;
-      }
-   }
-
-   #---
-   # now, search the description for information not provided explicitly in the fields - look for bedrooms in the text
-   if (!defined $$profileRef{'Bedrooms'})
-   {
-      
-      # determine if the description contains 'sqm' or a variation of that
-      #  look for 1 or more digits followed by any space and charcters until bedrooms.  Note that a non-digit or 
-      # non alpha character will break the pattern (for example, a comma implies the number may not be associated with bedrooms)
-      # this is pretty rough but should work most of the time
-      $description = $$_{'Description'};
-      if ($description =~ /(\d+)([\w|\s]*)bedroom/i)
-      {
-         # this expression extracts the bedrooms number out into $1 and assigns it to $bedrooms 
-         # the 'e' modified ensures the second expresion is executed
-         $description =~ s/(\d+)([\w|\s]*)bedroom/$bedrooms = sprintf("$1")/ei;         
-      } 
-      
-      if ((defined $bedrooms) && ($bedrooms > 0))
-      {
-         # assign the land area specified in the description
-         $$profileRef{'Bedrooms'} = $bedrooms;
-      }
-   }
-   
-    #---
-   # now, search the description for information not provided explicitly in the fields - look for bathrooms in the text
-   if (!defined $$profileRef{'Bathrooms'})
-   {      
-      #  look for 1 or more digits followed by any space and charcters until bath.  Note that a non-digit or 
-      # non alpha character will break the pattern (for example, a comma implies the number may not be associated with bath)
-      # this is pretty rough but should work most of the time
-      $description = $$_{'Description'};
-      if ($description =~ /(\d+)([\w|\s]*)bath/i)
-      {
-         # this expression extracts the bedrooms number out into $1 and assigns it to $bedrooms 
-         # the 'e' modified ensures the second expresion is executed
-         $description =~ s/(\d+)([\w|\s]*)bath/$bathrooms = sprintf("$1")/ei;         
-      } 
-      
-      if ((defined $bathrooms) && ($bathrooms > 0))
-      {
-         # assign the land area specified in the description
-         $$profileRef{'Bathrooms'} = $bathrooms;
-      }
-   }
-   
-   # format the text using standard conventions to easy comparison later
-   $$profileRef{'SuburbName'} = prettyPrint($$profileRef{'SuburbName'}, 1);
-
-   if (defined $$profileRef{'StreetNumber'})
-   {
-      $$profileRef{'StreetNumber'} = prettyPrint($$profileRef{'StreetNumber'}, 1);
-   }
-   
-   if (defined $$profileRef{'Street'})
-   {
-      $$profileRef{'Street'} = prettyPrint($$profileRef{'Street'}, 1);
-   }
-
-   if (defined $$profileRef{'City'})
-   {
-      $$profileRef{'City'} = prettyPrint($$profileRef{'City'}, 1);
-   }
-
-   if (defined $$profileRef{'Council'})
-   {
-      $$profileRef{'Council'} = prettyPrint($$profileRef{'Council'}, 1);
+      $$profileRef{'StreetAddress'} = prettyPrint($$profileRef{'StreetAddress'}, 1);
    }
    
    if (defined $$profileRef{'Description'})
@@ -415,6 +291,21 @@ sub tidyRecord
    if (defined $$profileRef{'Features'})
    {
       $$profileRef{'Features'} = prettyPrint($$profileRef{'Features'}, 0);
+   }
+   
+   if (defined $$profileRef{'AgencyName'})
+   {
+      $$profileRef{'AgencyName'} = prettyPrint($$profileRef{'AgencyName'}, 1);
+   }
+   
+   if (defined $$profileRef{'AgencyAddress'})
+   {
+      $$profileRef{'AgencyAddress'} = prettyPrint($$profileRef{'AgencyAddress'}, 1);
+   }
+   
+   if (defined $$profileRef{'ContactName'})
+   {
+      $$profileRef{'ContactName'} = prettyPrint($$profileRef{'ContactName'}, 1);
    }
 }
 
@@ -1112,5 +1003,28 @@ sub extractOnlyParentName
 
    return $parentName;
 }
+# -------------------------------------------------------------------------------------------------
+
+   
+# constructs a hash of the fields for a property, tidies it up a little and calculates the checksum used
+# for fast lookups
+# returns reference to the hash
+sub populatePropertyProfileHash
+
+{
+   my $sqlClient = shift;
+   my $documentReader = shift;
+   my $propertyProfile = shift;
+   
+   tidyRecord($sqlClient, $propertyProfile);        # 27Nov04 - used to be called validateProfile
+   # calculate a checksum for the information - the checksum is used to approximately 
+   # identify the uniqueness of the data
+   $checksum = $documentReader->calculateChecksum($propertyProfile);
+  
+   $$propertyProfile{'Checksum'} = $checksum;
+   
+   return $propertyProfile;  
+}
+
 # -------------------------------------------------------------------------------------------------
 

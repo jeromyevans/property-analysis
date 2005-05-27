@@ -57,6 +57,7 @@ sub new
    if (!$databaseName)
    {
       $databaseName = "PropertyData";
+      #$databaseName = "TrialData";
    }
    
    my $sqlClient = {         

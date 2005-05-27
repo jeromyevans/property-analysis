@@ -12,6 +12,7 @@
 # 
 # History:
 # 2 April 2005 - added index to the table on threadid, region, suburb used to increase lookup speed
+# 8 May 2005   - fixed typo in text adding the index above
 #
 # CONVENTIONS
 # _ indicates a private variable or method
@@ -101,7 +102,7 @@ sub createTable
    my $tableName = $this->{'tableName'};
  
    my $SQL_CREATE_TABLE_PREFIX = "CREATE TABLE IF NOT EXISTS $tableName (";
-   my $SQL_CREATE_TABLE_SUFFIX = "INDEX (ThreadID, Region(10), Suburb(10))";
+   my $SQL_CREATE_TABLE_SUFFIX = ", INDEX (ThreadID, Region(10), Suburb(10))";
    
    if ($sqlClient)
    {

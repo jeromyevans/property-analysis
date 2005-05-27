@@ -61,7 +61,7 @@ $sqlClient->connect();
 $printLogger->print("   Fetching OriginatingHTML table...\n");
    
 # get the content of the table
-@selectResult = $sqlClient->doSQLSelect("select unix_timestamp(DateEntered) as UnixTime, Identifier, SourceURL from OriginatingHTML");
+@selectResult = $sqlClient->doSQLSelect("select DateEntered, Identifier, SourceURL from OriginatingHTML");
    
 $length = @selectResult;
 $printLogger->print("   $length records.\n");
@@ -74,12 +74,11 @@ $recordsFound = 0;
 foreach (@selectResult)
 {
    $identifier = $$_{'Identifier'};
-   $localTime = $$_{'UnixTime'};
+   $localTime = $$_{'DateEntered'};
    $url = $$_{'SourceURL'};
    
    # read the source originating HTML file
-   
-   $content = $originatingHTML->readHTMLContent($identifier);
+   $content = $originatingHTML->readHTMLContent($identifier, 1);
    if ($content)
    {
       $recordsFound++;

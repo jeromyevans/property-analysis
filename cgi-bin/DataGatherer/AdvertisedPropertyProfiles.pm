@@ -33,7 +33,19 @@
 #   5 December 2004 - adapted to support both sales and rentals instead of two separete files with duplicated code
 #   2 April 2005 - updated all insert functions to use $sqlClient->lastInsertID(); to get the identifier of the
 #    last record inserted instead of performing a select function to find out.  This is MUCH faster.
-#
+#   8 May 2005 - major change to database structure to include unit number, agentindex, rename some fields and
+#     remove unused fields, AND combine sale and rental advertisements into one table
+#              - removed cacheview
+#              - added checkIfProfileExists - that uses a hash instead of individual parameters
+#              - completely removed concept of whether its a sale or rental table - always up to the individual 
+#     methods to specify what data they're handling (when appropriate)
+#  23 May 2005 - another significant change - modified the table so that the parsers don't need to perform processing
+#     of address or price strings - instead the advertisedpropertyprofiles table contains the original unprocessed
+#     data.  Later, the working view will include the processed derived data (like decomposed address, indexes etc)
+#  26 May 2005 - modified addRecord so it creates the OriginatingHTML record (specify url and htmlsyntaxtree)
+#              - modified handling of localtime so it uses localtime(time) instead of the mysql in-built function
+#     localtime().  Improved support for overriding the time, and added support for the exact same timestamp
+#     to be used in the changetable and originating html
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -46,6 +58,7 @@ require Exporter;
 
 use DBI;
 use SQLClient;
+use OriginatingHTML;
 
 @ISA = qw(Exporter);
 
@@ -63,32 +76,16 @@ use SQLClient;
 sub new
 {   
    my $sqlClient = shift;
-   my $advertisementType = shift;
-   
-   if ($advertisementType eq 'Sales')
-   {
-      $tableName = 'AdvertisedSaleProfiles';
-      $tableType = 0;
-   }
-   else
-   {
-      if ($advertisementType eq 'Rentals')
-      {
-         $tableName = 'AdvertisedRentalProfiles';
-         $tableType = 1;
-      }
-      else
-      {
-         $tableType = -1;
-      }
-   }
+
+   $tableName = 'AdvertisedPropertyProfiles';
+   $originatingHTML = OriginatingHTML::new($sqlClient);
    
    my $advertisedPropertyProfiles = { 
       sqlClient => $sqlClient,
       tableName => $tableName,
-      tableType => $tableType,
       useDifferentTime => 0,
-      dateEntered => undef
+      dateEntered => undef,
+      originatingHTML => $originatingHTML
    }; 
       
    bless $advertisedPropertyProfiles;     
@@ -96,6 +93,7 @@ sub new
    return $advertisedPropertyProfiles;   # return this
 }
 
+# -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
 # -------------------------------------------------------------------------------------------------
 # createTable
@@ -120,63 +118,38 @@ sub new
 #   TRUE (1) if successful, 0 otherwise
 #
 
-my $SQL_CREATE_SALES_TABLE_BODY = 
+my $SQL_CREATE_TABLE_BODY = 
+   "Identifier INTEGER ZEROFILL PRIMARY KEY AUTO_INCREMENT, ".    
    "DateEntered DATETIME NOT NULL, ".
    "LastEncountered DATETIME, ".
+   "SaleOrRentalFlag INTEGER,".                   
    "SourceName TEXT, ".
-   "SourceURL TEXT, ".
    "SourceID VARCHAR(20), ".
+   "TitleString TEXT, ".
    "Checksum INTEGER, ".
-   "InstanceID TEXT, ".
-   "TransactionNo INTEGER, ".
-   "Identifier INTEGER ZEROFILL PRIMARY KEY AUTO_INCREMENT, ".    
-   "SuburbIndex INTEGER UNSIGNED ZEROFILL, ".
+   "State VARCHAR(3), ".   
    "SuburbName TEXT, ".
-   "State TEXT, ".
    "Type VARCHAR(10), ".
-   "TypeIndex INTEGER, ".
    "Bedrooms INTEGER, ".
    "Bathrooms INTEGER, ".
-   "Land INTEGER, ".
+   "LandArea TEXT, ".   
+   "BuildingArea TEXT, ".
    "YearBuilt VARCHAR(5), ".
-   "AdvertisedPriceLower DECIMAL(10,2), ".
-   "AdvertisedPriceUpper DECIMAL(10,2), ".
+   "AdvertisedPriceString TEXT, ".
+   "StreetAddress TEXT, ".
    "Description TEXT, ".    
-   "StreetNumber TEXT, ".
-   "Street TEXT, ".    
-   "City TEXT, ".
-   "Council TEXT, ".
    "Features TEXT,".
-   "CreatedBy INTEGER ZEROFILL";
-              
-my $SQL_CREATE_RENTALS_TABLE_BODY = 
-   "DateEntered DATETIME NOT NULL, ".
-   "LastEncountered DATETIME, ".
-   "SourceName TEXT, ".
-   "SourceURL TEXT, ".
-   "SourceID VARCHAR(20), ".
-   "Checksum INTEGER, ".
-   "InstanceID TEXT, ".
-   "TransactionNo INTEGER, ".
-   "Identifier INTEGER ZEROFILL PRIMARY KEY AUTO_INCREMENT, ".    
-   "SuburbIndex INTEGER UNSIGNED ZEROFILL, ".
-   "SuburbName TEXT, ".
-   "State TEXT, ".
-   "Type VARCHAR(10), ".
-   "TypeIndex INTEGER, ".
-   "Bedrooms INTEGER, ".
-   "Bathrooms INTEGER, ".        
-   "Land INTEGER, ".
-   "YearBuilt VARCHAR(5), ".
-   "AdvertisedWeeklyRent DECIMAL(10,2), ".        
-   "Description TEXT, ".    
-   "StreetNumber TEXT, ".
-   "Street TEXT, ".    
-   "City TEXT, ".
-   "Council TEXT, ".
-   "Features TEXT, ".
-   "CreatedBy INTEGER ZEROFILL"; 
-
+   "OriginatingHTML INTEGER ZEROFILL,".       
+   "AgencySourceID TEXT, ".
+   "AgencyName TEXT, ".
+   "AgencyAddress TEXT, ".   
+   "SalesPhone TEXT, ".
+   "RentalsPhone TEXT, ".
+   "Fax TEXT, ".
+   "ContactName TEXT, ".
+   "MobilePhone TEXT, ".
+   "Website TEXT";
+   
 sub createTable
 
 {
@@ -184,22 +157,15 @@ sub createTable
    my $success = 0;
    my $sqlClient = $this->{'sqlClient'};
    my $tableName = $this->{'tableName'};
- 
+   
    my $SQL_CREATE_TABLE_PREFIX = "CREATE TABLE IF NOT EXISTS $tableName (";
-   my $SQL_CREATE_TABLE_SUFFIX = " INDEX (sourceName(5), sourceID(10)))";        # 23Jan05 - index!
+   my $SQL_CREATE_TABLE_SUFFIX = ", INDEX (SaleOrRentalFlag, SourceName(5), SourceID(10), TitleString(15), Checksum))";  # extended now that cacheview is dropped
    
    if ($sqlClient)
    {
       # append table prefix, original table body and table suffix
-      if ($this->{'tableType'} == 0)
-      {
-         $sqlStatement = $SQL_CREATE_TABLE_PREFIX.$SQL_CREATE_SALES_TABLE_BODY.$SQL_CREATE_TABLE_SUFFIX;
-      }
-      else
-      {
-         $sqlStatement = $SQL_CREATE_TABLE_PREFIX.$SQL_CREATE_RENTALS_TABLE_BODY.$SQL_CREATE_TABLE_SUFFIX;
-      }
-      
+      $sqlStatement = $SQL_CREATE_TABLE_PREFIX.$SQL_CREATE_TABLE_BODY.$SQL_CREATE_TABLE_SUFFIX;
+     
       $statement = $sqlClient->prepareStatement($sqlStatement);
       
       if ($sqlClient->executeStatement($statement))
@@ -211,7 +177,7 @@ sub createTable
          # 29Nov04: create the corresponding working view
          $this->_createWorkingViewTable();
          # 30Nov04: create the corresponding working view
-         $this->_createCacheViewTable();
+         #$this->_createCacheViewTable();
       }
      
    }
@@ -220,14 +186,15 @@ sub createTable
 }
 
 # -------------------------------------------------------------------------------------------------
-# setDateEntered
-# sets the dateEntered field to use for the next add (instead of currentTime)
-# 
+# overrideDateEntered
+# sets the dateEntered field to use for the next add (instead of the current time)
+# use when adding old data back into a database
+#
 # Purpose:
 #  Storing information in the database
 #
 # Parameters:
-#  date to use
+#  timestamp to use (in SQL TIMESTAMP format)
 #
 # Constraints:
 #  nil
@@ -241,36 +208,29 @@ sub createTable
 # Returns:
 #   TRUE (1) if successful, 0 otherwise
 #        
-sub setDateEntered
+sub overrideDateEntered
 
 {
    my $this = shift;
-   my $currentYear = shift;
-   my $currentMonth = shift;
-   my $currentDay = shift;
-   my $currentHour = shift;
-   my $currentMin = shift;
-   my $currentSec = shift;
+   my $timestamp = shift;
    
-   $this->{'dateEntered'} = sprintf("%04d-%02d-%02d %02d:%02d:%02d", $currentYear, $currentMonth, $currentDay, $currentHour, $currentMin, $currentSec);
+   $this->{'dateEntered'} = $timestamp;
    $this->{'useDifferentTime'} = 1;
 }
 
+
 # -------------------------------------------------------------------------------------------------
 # addRecord
-# adds a record of data to the AdvertisedxProfiles table
-# OPERATES ON ALL VIEWS (cache and working view is updated)
+# adds a record of data to the AdvertisedPropertyProfiles table
+# OPERATES ON ALL VIEWS (working view is updated)
 #
 # Purpose:
 #  Storing information in the database
 #
 # Parameters:
-#  string source name
 #  reference to a hash containing the values to insert
 #  string sourceURL
-#  integer checksum
-#  string instanceID
-#  integer transactionNo
+#  htmlsyntaxtree - used to generating originatingHTML record
 #
 # Constraints:
 #  nil
@@ -288,53 +248,39 @@ sub addRecord
 
 {
    my $this = shift;
-   my $sourceName = shift;
    my $parametersRef = shift;
    my $url = shift;
-   my $checksum = shift;
-   my $instanceID = shift;
-   my $transactionNo = shift;
+   my $htmlSyntaxTree = shift;
    
    my $success = 0;
    my $sqlClient = $this->{'sqlClient'};
    my $statementText;
    my $tableName = $this->{'tableName'};
    my $localTime;
-   
+   my $originatingHTML = $this->{'originatingHTML'};
    my $identifier = -1;
    
    if ($sqlClient)
    {
-      $statementText = "INSERT INTO $tableName (";
+      $statementText = "INSERT INTO $tableName (DateEntered, ";
       
       @columnNames = keys %$parametersRef;
       
       # modify the statement to specify each column value to set 
-      $appendString = "DateEntered, identifier, sourceName, sourceURL, checksum, instanceID, transactionNo, ";
-      $index = 0;
-      foreach (@columnNames)
-      {
-         if ($index != 0)
-         {
-            $appendString = $appendString.", ";
-         }
-        
-         $appendString = $appendString . $_;
-         $index++;
-      }      
+      $appendString = join ',', @columnNames;
       
       $statementText = $statementText.$appendString . ") VALUES (";
       
       # modify the statement to specify each column value to set 
       @columnValues = values %$parametersRef;
       $index = 0;
-      $quotedSource = $sqlClient->quote($sourceName);
-      $quotedUrl = $sqlClient->quote($url);
-      $quotedInstance = $sqlClient->quote($instanceID);
       
       if (!$this->{'useDifferentTime'})
       {
-         $localTime = "localtime()";
+         # determine the current time
+         ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
+         $this->{'dateEntered'} = sprintf("%04d-%02d-%02d %02d:%02d:%02d", $year+1900, $mon+1, $mday, $hour, $min, $sec);
+         $localTime = $sqlClient->quote($this->{'dateEntered'});
       }
       else
       {
@@ -343,7 +289,8 @@ sub addRecord
          $this->{'useDifferentTime'} = 0;  # reset the flag
       }      
       
-      $appendString = "$localTime, null, $quotedSource, $quotedUrl, $checksum, $quotedInstance, $transactionNo, ";
+      $appendString = "$localTime, ";
+      $index = 0;
       foreach (@columnValues)
       {
          if ($index != 0)
@@ -365,24 +312,15 @@ sub addRecord
          
          # 2 April 2005 - use lastInsertID to get the primary key identifier of the record just inserted
          $identifier = $sqlClient->lastInsertID();
-         
-         # --- Deprecated code ---
-            # 27Nov04 - get the identifier (primaryKey) of the record just created and return it
-            # note the most recent DateEntered can't be used reliably (if recovering from logs, or if multiple processes running)
-            # instead we use: the parameters defining this instance
-         #   $sqlStatement = "select identifier from $tableName where sourceName=$quotedSource and sourceURL=$quotedUrl and checksum=$checksum and instanceID = $quotedInstance and transactionNo = $transactionNo order by DateEntered";
-         #   @selectResults = $sqlClient->doSQLSelect($sqlStatement);
-           
-            # only one result should be returned - if there's more than one, then we have a problem, to avoid it always take
-            # the most recent entry which is the last in the list due to the 'order by' command
-         #   $lastRecordHashRef = $selectResults[$#selectResults];
-         #   $identifier = $$lastRecordHashRef{'identifier'};
-         
+                  
          # --- add the new record to the cache and working view ---
          if ($identifier)
          {
-            $this->_cacheView_addRecord($identifier, $sourceName, $parametersRef, $checksum);
-            $this->_workingView_addRecord($identifier);
+            # NOTE: WORKING VIEW IS CURRENTLY DISABLED 27May05
+            #$this->_workingView_addRecord($identifier);
+            
+            # 27Nov04: save the HTML file entry that created this record
+            $originatingHTML->addRecord($this->{'dateEntered'}, $identifier, $url, $htmlSyntaxTree, $tableName);
          }
       }
    }
@@ -429,11 +367,11 @@ sub dropTable
       if ($sqlClient->executeStatement($statement))
       {
          $success = 1;
-         $statementText = "DROP TABLE CacheView_$tableName";
-         $statement = $sqlClient->prepareStatement($statementText);
+         #$statementText = "DROP TABLE CacheView_$tableName";
+         #$statement = $sqlClient->prepareStatement($statementText);
          
-         if ($sqlClient->executeStatement($statement))
-         {
+         #if ($sqlClient->executeStatement($statement))
+         #{
 
             $statementText = "DROP TABLE ChangeTable_$tableName";
             $statement = $sqlClient->prepareStatement($statementText);
@@ -450,7 +388,7 @@ sub dropTable
                   $success = 1;
                }
             }
-         }
+         #}
       }
    }
    
@@ -515,19 +453,17 @@ sub countEntries
 
 
 # -------------------------------------------------------------------------------------------------
-# _checkIfTupleExists_Sales  (SALES ONLY VERSION)
+# checkIfResultExists
 # checks whether the specified tuple exists in the table (part of this check uses a checksum)
-# OPERATES ON THE CACHEVIEW
 #
 # Purpose:
 #  tracking data parsed by the agent
 #
 # Parameters:
-#  string source
+#  saleOrRentalFlag
+#  string sourceName
 #  string sourceID
-#  string checksum (ignored if undef)
-#  integer priceLower (ignored if undef)
-#  integer priceUpper (not used)
+#  string titleString (the title of the record in the search results - if it changes, a new record is added) 
 
 # Constraints:
 #  nil
@@ -537,14 +473,13 @@ sub countEntries
 #
 # Returns:
 #   nil
-sub _checkIfTupleExists_Sales
+sub checkIfResultExists
 {   
    my $this = shift;
+   my $saleOrRentalFlag = shift;
    my $sourceName = shift;      
    my $sourceID = shift;
-   my $checksum = shift;
-   my $advertisedPriceLower = shift;
-   my $advertisedPriceUpper = shift;
+   my $titleString = shift;
    my $statement;
    my $found = 0;
    my $statementText;
@@ -556,17 +491,86 @@ sub _checkIfTupleExists_Sales
    {       
       $quotedSource = $sqlClient->quote($sourceName);
       $quotedSourceID = $sqlClient->quote($sourceID);
-      $quotedUrl = $sqlClient->quote($url);
+      $quotedTitleString = $sqlClient->quote($titleString);
+
+      $statementText = "SELECT sourceName, sourceID, titleString FROM $tableName WHERE SaleOrRentalFlag = $saleOrRentalFlag AND sourceName = $quotedSource AND sourceID = $quotedSourceID AND titleString = $quotedTitleString";
+      $statement = $sqlClient->prepareStatement($statementText);
+      if ($sqlClient->executeStatement($statement))
+      {
+         # get the array of rows from the table
+         @resultList = $sqlClient->fetchResults();
+                           
+         foreach (@resultList)
+         {
+#            DebugTools::printHash("result", $_);
+            # only check advertisedpricelower if it's undef (if caller hasn't set it because info wasn't available then don't check that field.           
+            
+            # $_ is a reference to a hash               
+            if (($$_{'sourceName'} == $sourceName) && ($$_{'sourceID'} == $sourceID) && ($$_{'titleString'} == $titleString))            
+            {
+               # found a match
+               $found = 1;
+               last;
+            }
+         }                 
+      }              
+   }   
+   return $found;   
+}  
+
+
+
+# -------------------------------------------------------------------------------------------------
+# checkIfTupleExists
+# checks whether the specified tuple exists in the table (part of this check uses a checksum)
+#
+# Purpose:
+#  tracking data parsed by the agent
+#
+# Parameters:
+#  saleOrRentalFlag
+#  string sourceName
+#  string sourceID
+#  string checksum (ignored if undef)
+#  string priceString (ignored if undef)
+
+# Constraints:
+#  nil
+#
+# Updates:
+#  Nil
+#
+# Returns:
+#   nil
+sub checkIfTupleExists
+{   
+   my $this = shift;
+   my $saleOrRentalFlag = shift;
+   my $sourceName = shift;      
+   my $sourceID = shift;
+   my $checksum = shift;
+   my $advertisedPriceString = shift;
+   my $statement;
+   my $found = 0;
+   my $statementText;
+      
+   my $sqlClient = $this->{'sqlClient'};
+   my $tableName = $this->{'tableName'};
+   
+   if ($sqlClient)
+   {       
+      $quotedSource = $sqlClient->quote($sourceName);
+      $quotedSourceID = $sqlClient->quote($sourceID);
       
       if (defined $checksum)
       {
          if ($advertisedPriceLower)
          {
-            $statementText = "SELECT sourceName, sourceID, checksum, advertisedPriceLower FROM CacheView_$tableName WHERE sourceName = $quotedSource and sourceID = $quotedSourceID and checksum = $checksum and advertisedPriceLower = $advertisedPriceLower";
+            $statementText = "SELECT sourceName, sourceID, checksum, advertisedPriceString FROM $tableName WHERE SaleOrRentalFlag = $saleOrRentalFlag AND sourceName = $quotedSource and sourceID = $quotedSourceID and checksum = $checksum and advertisedPriceString = $advertisedPriceString";
          }
          else
          {
-            $statementText = "SELECT sourceName, sourceID, checksum FROM CacheView_$tableName WHERE sourceName = $quotedSource and sourceID = $quotedSourceID and checksum = $checksum";
+            $statementText = "SELECT sourceName, sourceID, checksum FROM $tableName WHERE SaleOrRentalFlag = $saleOrRentalFlag AND sourceName = $quotedSource and sourceID = $quotedSourceID and checksum = $checksum";
          }
       }
       else
@@ -576,13 +580,13 @@ sub _checkIfTupleExists_Sales
          {
             #print "   checkIfTupleExists:apl=$advertisedPriceLower\n";
 
-            $statementText = "SELECT sourceName, sourceID, advertisedPriceLower FROM CacheView_$tableName WHERE sourceName = $quotedSource and sourceID = $quotedSourceID and advertisedPriceLower = $advertisedPriceLower";
+            $statementText = "SELECT sourceName, sourceID, advertisedPriceString FROM $tableName WHERE SaleOrRentalFlag = $saleOrRentalFlag AND sourceName = $quotedSource and sourceID = $quotedSourceID and advertisedPriceString = $advertisedPriceString";
          }
          else
          {
             #print "   checkIfTupleExists:no apl\n";
 
-            $statementText = "SELECT sourceName, sourceID FROM CacheView_$tableName WHERE sourceName = $quotedSource and sourceID = $quotedSourceID";
+            $statementText = "SELECT sourceName, sourceID FROM $tableName WHERE SaleOrRentalFlag = $saleOrRentalFlag AND sourceName = $quotedSource and sourceID = $quotedSourceID";
          }
       }
       
@@ -601,7 +605,7 @@ sub _checkIfTupleExists_Sales
             {
                # $_ is a reference to a hash
                
-               if (($$_{'checksum'} == $checksum) && ($$_{'sourceName'} == $sourceName) && ($$_{'sourceID'} == $sourceID) && ($$_{'advertisedPriceLower'} = $advertisedPriceLower))            
+               if (($$_{'checksum'} == $checksum) && ($$_{'sourceName'} == $sourceName) && ($$_{'sourceID'} == $sourceID) && ($$_{'advertisedPriceString'} == $advertisedPriceString))            
                {
                   # found a match
                   $found = 1;
@@ -626,17 +630,15 @@ sub _checkIfTupleExists_Sales
 
 
 # -------------------------------------------------------------------------------------------------
-# _checkIfTupleExists_Rentals (RENTALS ONLY VERSION)
-# checks whether the specified tuple exists in the table (part of this check uses a checksum)
+# checkIfProfileExists
+# checks whether the specified profile already exists in the table (part of this check uses a checksum)
 #
 # Purpose:
-#  tracking data parsed by the agent
+#  tracking changed data parsed by the agent
 #
 # Parameters:
-#  string source
-#  string sourceID
-#  string checksum (ignored if undef)
-# integer advertisedWeeklyRent
+#  reference to the profile hash
+#
 # Constraints:
 #  nil
 #
@@ -644,127 +646,14 @@ sub _checkIfTupleExists_Sales
 #  Nil
 #
 # Returns:
-#   nil
-sub _checkIfTupleExists_Rentals
+#   true if found
+#
+sub checkIfProfileExists
 {   
    my $this = shift;
-   my $sourceName = shift;      
-   my $sourceID = shift;
-   my $checksum = shift;
-   my $advertisedWeeklyRent = shift;
-   my $statement;
-   my $found = 0;
-   my $statementText;
+   my $propertyProfile = shift;
    
-   my $sqlClient = $this->{'sqlClient'};
-   my $tableName = $this->{'tableName'};
-   
-   if ($sqlClient)
-   {       
-      $quotedSource = $sqlClient->quote($sourceName);
-      $quotedSourceID = $sqlClient->quote($sourceID);
-      $quotedUrl = $sqlClient->quote($url);
-      if (defined $checksum)
-      {  
-         if ($advertisedWeeklyRent)
-         {
-            $statementText = "SELECT sourceName, sourceID, checksum, advertisedWeeklyRent FROM CacheView_$tableName WHERE sourceName = $quotedSource and sourceID = $quotedSourceID and checksum = $checksum and advertisedWeeklyRent = $advertisedWeeklyRent";
-         }
-         else
-         {
-            $statementText = "SELECT sourceName, sourceID, checksum FROM CacheView_$tableName WHERE sourceName = $quotedSource and sourceID = $quotedSourceID and checksum = $checksum";
-         }
-      }
-      else
-      {
-         if ($advertisedWeeklyRent)
-         {
-            $statementText = "SELECT sourceName, sourceID, advertisedWeeklyRent FROM CacheView_$tableName WHERE sourceName = $quotedSource and sourceID = $quotedSourceID and advertisedWeeklyRent = $advertisedWeeklyRent";
-         }
-         else
-         {
-            $statementText = "SELECT sourceName, sourceID FROM CacheView_$tableName WHERE sourceName = $quotedSource and sourceID = $quotedSourceID";
-         }
-      }      
-            
-      $statement = $sqlClient->prepareStatement($statementText);
-      
-      if ($sqlClient->executeStatement($statement))
-      {
-         # get the array of rows from the table
-         @checksumList = $sqlClient->fetchResults();
-                           
-         foreach (@checksumList)
-         {        
-            if ($advertisedWeeklyRent)
-            {
-               # $_ is a reference to a hash
-               if (($$_{'checksum'} == $checksum) && ($$_{'sourceName'} == $sourceName) && ($$_{'sourceID'} == $sourceID) && ($$_{'advertisedWeeklyRent'} == $advertisedWeeklyRent))            
-               {
-                  # found a match
-                  $found = 1;
-                  last;
-               }
-            }
-            else
-            {
-               # $_ is a reference to a hash
-               if (($$_{'checksum'} == $checksum) && ($$_{'sourceName'} == $sourceName) && ($$_{'sourceID'} == $sourceID))            
-               {
-                  # found a match
-                  $found = 1;
-                  last;
-               }
-            }
-         }                 
-      }                    
-   }   
-   return $found;   
-}  
-
-
-# -------------------------------------------------------------------------------------------------
-# checkIfTupleExists
-# checks whether the specified tuple exists in the table (part of this check uses a checksum)
-# OPERATES ON THE CACHEVIEW
-#
-# Purpose:
-#  tracking data parsed by the agent
-#
-# Parameters:
-#  string source
-#  string sourceID
-#  string checksum (ignored if undef)
-#  integer priceLower (ignored if undef)
-#  integer priceUpper (not used)
-
-# Constraints:
-#  nil
-#
-# Updates:
-#  Nil
-#
-# Returns:
-#   nil
-sub checkIfTupleExists
-{   
-   my $this = shift;
-   my $sourceName = shift;      
-   my $sourceID = shift;
-   my $checksum = shift;
-   my $priceLower = shift;
-   my $priceUpper = shift;
-
-   my $tableType = $this->{'tableType'};
-   
-   if ($tableType == 0)
-   {
-      $found = $this->_checkIfTupleExists_Sales($sourceName, $sourceID, $checksum, $priceLower, $priceUpper);
-   }
-   else
-   {      
-      $found = $this->_checkIfTupleExists_Rentals($sourceName, $sourceID, $checksum, $priceLower);
-   }
+   $found = $this->checkIfTupleExists($$propertyProfile{'SaleOrRentalFlag'}, $$propertyProfile{'SourceName'}, $$propertyProfile{'SourceID'}, $$propertyProfile{'Checksum'}, $$propertyProfile{'AdvertisedPriceString'});
 
    return $found;   
 }
@@ -799,6 +688,7 @@ sub addEncounterRecord
 
 {
    my $this = shift;
+   my $saleOrRentalFlag = shift;
    my $sourceName = shift;
    my $sourceID = shift;
    my $checksum = shift;
@@ -817,7 +707,10 @@ sub addEncounterRecord
   
       if (!$this->{'useDifferentTime'})
       {
-         $localTime = "localtime()";
+         # determine the current time
+         ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
+         $this->{'dateEntered'} = sprintf("%04d-%02d-%02d %02d:%02d:%02d", $year+1900, $mon+1, $mday, $hour, $min, $sec);
+         $localTime = $sqlClient->quote($this->{'dateEntered'});
       }
       else
       {
@@ -830,13 +723,13 @@ sub addEncounterRecord
       {
          $statementText = "UPDATE $tableName ".
            "SET LastEncountered = $localTime ".
-           "WHERE (sourceName = $quotedSource AND sourceID = $quotedSourceID AND checksum = $checksum)";
+           "WHERE (SaleOrRentalFlag = $saleOrRentalFlag AND sourceName = $quotedSource AND sourceID = $quotedSourceID AND checksum = $checksum)";
       }
       else
       {
          $statementText = "UPDATE $tableName ".
            "SET LastEncountered = $localTime ".
-           "WHERE (sourceName = $quotedSource AND sourceID = $quotedSourceID)";
+           "WHERE (SaleOrRentalFlag = $saleOrRentalFlag AND sourceName = $quotedSource AND sourceID = $quotedSourceID)";
       }
       
       #print "addEncounterRecord: $statementText\n";
@@ -876,7 +769,6 @@ sub addEncounterRecord
 #   TRUE (1) if successful, 0 otherwise
 #   
 
-
 sub _createChangeTable
 
 {
@@ -887,21 +779,14 @@ sub _createChangeTable
  
    my $SQL_CREATE_CHANGE_TABLE_PREFIX = "CREATE TABLE IF NOT EXISTS ChangeTable_$tableName (";
    my $SQL_CREATE_CHANGE_TABLE_SUFFIX = ", ".
-      "ChangesRecord INTEGER ZEROFILL, ".  # primary key
-      "ChangedBy TEXT,".                   # who/what changed it
-      "INDEX (sourceName(5), sourceID(10)))";    # 23Jan05 - index!
+      "ChangesRecord INTEGER ZEROFILL REFERENCES $tableName(identifier), ".  # foreign key
+      "ChangedBy TEXT,".                         # who/what changed it
+      "INDEX (SaleOrRentalFlag, sourceName(5), sourceID(10)))";    # 23Jan05 - index!
       
    if ($sqlClient)
    {
       # append change table prefix, original table body and change table suffix
-      if ($this->{'tableType'} == 0)
-      {
-         $sqlStatement = $SQL_CREATE_CHANGE_TABLE_PREFIX.$SQL_CREATE_SALES_TABLE_BODY.$SQL_CREATE_CHANGE_TABLE_SUFFIX;
-      }
-      else
-      {
-         $sqlStatement = $SQL_CREATE_CHANGE_TABLE_PREFIX.$SQL_CREATE_RENTALS_TABLE_BODY.$SQL_CREATE_CHANGE_TABLE_SUFFIX;
-      }
+      $sqlStatement = $SQL_CREATE_CHANGE_TABLE_PREFIX.$SQL_CREATE_TABLE_BODY.$SQL_CREATE_CHANGE_TABLE_SUFFIX;
       
       $statement = $sqlClient->prepareStatement($sqlStatement);
       
@@ -918,8 +803,7 @@ sub _createChangeTable
 # -------------------------------------------------------------------------------------------------
 # changeRecord
 # alters a record of data in the AdvertisedxProfiles table and records the changed
-#  data transaction.   Note ONLY the WORKING VIEW is updated, not the main view (and consequently 
-# the cacheView also isn't updated)
+#  data transaction.   Note ONLY the WORKING VIEW is updated, not the original view 
 # 
 # Purpose:
 #  Storing information in the database
@@ -927,8 +811,6 @@ sub _createChangeTable
 # Parameters:
 #  reference to a hash containing the values to insert
 #  string sourceURL
-#  string instanceID
-#  integer transactionNo
 #  integer sourceIdentifier
 #  string ChangedBy
 #
@@ -950,8 +832,6 @@ sub changeRecord
    my $this = shift;
    my $parametersRef = shift;
    my $url = shift;
-   my $instanceID = shift;
-   my $transactionNo = shift;
    my $sourceIdentifier = shift;
    my $changedBy = shift;
    
@@ -1000,7 +880,7 @@ sub changeRecord
          $appendString = $appendString."$field = ".$sqlClient->quote($value);
          $index++;
       }
-      # order by revese data limit 1 to get the last entry
+      # order by reverse data limit 1 to get the last entry
       $statementText = $statementText.$appendString." ORDER BY DateEntered DESC LIMIT 1";
 
       @selectResults = $sqlClient->doSQLSelect($statementText);
@@ -1021,7 +901,7 @@ sub changeRecord
          @columnNames = keys %$parametersRef;
          
          # modify the statement to specify each column value to set 
-         $appendString = "DateEntered, identifier, instanceID, transactionNo, ChangesRecord, ChangedBy, ";
+         $appendString = "DateEntered, identifier, ChangesRecord, ChangedBy, ";
          $index = 0;
          foreach (@columnNames)
          {
@@ -1044,7 +924,9 @@ sub changeRecord
    
          if (!$this->{'useDifferentTime'})
          {
-            $localTime = "localtime()";
+            ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
+            $this->{'dateEntered'} = sprintf("%04d-%02d-%02d %02d:%02d:%02d", $year+1900, $mon+1, $mday, $hour, $min, $sec);
+            $localTime = $sqlClient->quote($this->{'dateEntered'});
          }
          else
          {
@@ -1053,7 +935,7 @@ sub changeRecord
             $this->{'useDifferentTime'} = 0;  # reset the flag
          }      
          
-         $appendString = "$localTime, null, $quotedInstance, $transactionNo, $sourceIdentifier, $quotedChangedBy, ";
+         $appendString = "$localTime, null, $sourceIdentifier, $quotedChangedBy, ";
          foreach (@columnValues)
          {
             if ($index != 0)
@@ -1120,21 +1002,14 @@ sub _createWorkingViewTable
    my $SQL_CREATE_WORKINGVIEW_TABLE_SUFFIX = ", ".
        "ValidityCode INTEGER DEFAULT 1, ".        # validity code - default 1 means unvalidated
        "OverridenValidity INTEGER DEFAULT 0, ".   # overriddenValidity set by human
-       "ComponentOf INTEGER ZEROFILL".            # foreign key to master property table
-       " INDEX (sourceName(5), sourceID(10)))";   # 23Jan05 - index!
+       "ComponentOf INTEGER ZEROFILL,".            # foreign key to master property table
+       " INDEX (SaleOrRentalFlag, sourceName(5), sourceID(10)))";   # 23Jan05 - index!
     
    
    if ($sqlClient)
    {
       # append change table prefix, original table body and change table suffix
-      if ($this->{'tableType'} == 0)
-      {
-         $sqlStatement = $SQL_CREATE_WORKINGVIEW_TABLE_PREFIX.$SQL_CREATE_SALES_TABLE_BODY.$SQL_CREATE_WORKINGVIEW_TABLE_SUFFIX;
-      }
-      else
-      {
-         $sqlStatement = $SQL_CREATE_WORKINGVIEW_TABLE_PREFIX.$SQL_CREATE_RENTALS_TABLE_BODY.$SQL_CREATE_WORKINGVIEW_TABLE_SUFFIX;         
-      }
+      $sqlStatement = $SQL_CREATE_WORKINGVIEW_TABLE_PREFIX.$SQL_CREATE_TABLE_BODY.$SQL_CREATE_WORKINGVIEW_TABLE_SUFFIX;
       
       $statement = $sqlClient->prepareStatement($sqlStatement);
       
@@ -1381,152 +1256,6 @@ sub workingView_setSpecialField
    $specialHash{$fieldName} = $fieldValue;
    
    $this->_workingView_changeRecord(\%specialHash, $sourceIdentifier);
-}
-
-# -------------------------------------------------------------------------------------------------
-
-# -------------------------------------------------------------------------------------------------
-# _createCacheViewTable
-# attempts to create the CacheView_AdvertisedxProfiles table in the database if it doesn't already exist
-# This is a smaller view of the table used for faster fetch/comparison
-#
-# Purpose:
-#  Initialising a new database
-#
-# Parameters:
-#  nil
-#
-# Constraints:
-#  nil
-#
-# Uses:
-#  sqlClient
-#
-# Updates:
-#  nil
-#
-# Returns:
-#   TRUE (1) if successful, 0 otherwise
-#
-
-sub _createCacheViewTable
-
-{
-   my $this = shift;
-   my $success = 0;
-   my $sqlClient = $this->{'sqlClient'};
-   my $tableName = $this->{'tableName'};
-
-   my $SQL_CREATE_CACHEVIEW_TABLE_PREFIX = "CREATE TABLE IF NOT EXISTS CacheView_$tableName (";
-   my $SQL_CREATE_CACHEVIEW_SALES_TABLE_BODY = 
-       "SourceName TEXT, ".
-       "SourceID VARCHAR(20), ".
-       "Checksum INTEGER, ".
-       "Identifier INTEGER ZEROFILL PRIMARY KEY AUTO_INCREMENT, ".    
-       "AdvertisedPriceLower DECIMAL(10,2)";
-   my $SQL_CREATE_CACHEVIEW_RENTALS_TABLE_BODY = 
-       "SourceName TEXT, ".
-       "SourceID VARCHAR(20), ".
-       "Checksum INTEGER, ".
-       "Identifier INTEGER ZEROFILL PRIMARY KEY AUTO_INCREMENT, ".    
-       "AdvertisedWeeklyRent DECIMAL(10,2)";        
-   my $SQL_CREATE_CACHEVIEW_TABLE_SUFFIX = " INDEX (sourceName(5), sourceID(10)))";   # 23Jan05 - index!
-
-   if ($sqlClient)
-   {
-      # append table prefix, original table body and table suffix
-      if ($this->{'tableType'} == 0)
-      {
-         $sqlStatement = $SQL_CREATE_CACHEVIEW_TABLE_PREFIX.$SQL_CREATE_CACHEVIEW_SALES_TABLE_BODY.$SQL_CREATE_CACHEVIEW_TABLE_SUFFIX;
-      }
-      else
-      {
-         $sqlStatement = $SQL_CREATE_CACHEVIEW_TABLE_PREFIX.$SQL_CREATE_CACHEVIEW_RENTALS_TABLE_BODY.$SQL_CREATE_CACHEVIEW_TABLE_SUFFIX;
-      }
-      
-      $statement = $sqlClient->prepareStatement($sqlStatement);
-      
-      if ($sqlClient->executeStatement($statement))
-      {
-         $success = 1;
-      }
-     
-   }
-   
-   return $success;   
-}
-
-# -------------------------------------------------------------------------------------------------
-
-
-# -------------------------------------------------------------------------------------------------
-# _cacheView_addRecord
-# adds a record of data to the CacheView_AdvertisedxProfiles table
-# 
-# Purpose:
-#  Storing information in the database
-#
-# Parameters:
-#  integer identifier of the master record
-#  string source name
-#  reference to a hash containing the values to insert - this can be the fullset of parametrs, 
-#   as only the cached ones will be extracted anyway
-#  integer checksum
-#
-# Constraints:
-#  nil
-#
-# Uses:
-#  sqlClient
-#
-# Updates:
-#  nil
-#
-# Returns:
-#   TRUE (1) if successful, 0 otherwise
-#        
-sub _cacheView_addRecord
-
-{
-   my $this = shift;
-   my $identifier = shift;
-   my $sourceName = shift;
-   my $parametersRef = shift;
-   my $checksum = shift;
-   
-   my $success = 0;
-   my $sqlClient = $this->{'sqlClient'};
-   my $statementText;
-   my $tableName = $this->{'tableName'};
-      
-   if ($sqlClient)
-   {
-      $quotedIdentifier = $sqlClient->quote($identifier);
-      $quotedSource = $sqlClient->quote($sourceName);
-      $quotedID = $sqlClient->quote($$parametersRef{'SourceID'});
-      
-      if ($this->{'tableType'} == 0)
-      {
-         $quotedPrice = $sqlClient->quote($$parametersRef{'AdvertisedPriceLower'});
-         $statementText = "INSERT INTO CacheView_$tableName (Identifier, SourceName, SourceID, Checksum, AdvertisedPriceLower) VALUES ($quotedIdentifier, $quotedSource, $quotedID, $checksum, $quotedPrice)";
-      }
-      else
-      {
-         $quotedPrice = $sqlClient->quote($$parametersRef{'AdvertisedWeeklyRent'});
-         $statementText = "INSERT INTO CacheView_$tableName (Identifier, SourceName, SourceID, Checksum, AdvertisedWeeklyRent) VALUES ($quotedIdentifier, $quotedSource, $quotedID, $checksum, $quotedPrice)";         
-      }
-            
-      #print "statement = ", $statementText, "\n";
-      
-      $statement = $sqlClient->prepareStatement($statementText);
-      
-      if ($sqlClient->executeStatement($statement))
-      {
-         $success = 1;
-      }
-   }
-   
-   return $success;   
 }
 
 # -------------------------------------------------------------------------------------------------

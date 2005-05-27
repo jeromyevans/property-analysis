@@ -296,7 +296,7 @@ sub recoverLogFiles
                   $transactionAttributes{$_} =~ s/'//g;
                }
                
-               $transactionEpoch = timelocal($transactionAttributes{'sec'}, $transactionAttributes{'min'}, $transactionAttributes{'hour'}, $transactionAttributes{'mday'}, $transactionAttributes{'mon'}, $transactionAttributes{'year'});
+               $transactionEpoch = timelocal($transactionAttributes{'sec'}, $transactionAttributes{'min'}, $transactionAttributes{'hour'}, $transactionAttributes{'mday'}, $transactionAttributes{'mon'}-1, $transactionAttributes{'year'});
                #$printLogger->print(sprintf("   Transaction time: %04d-%02d-%02d %02d:%02d:%02d (%d)", $transactionAttributes{'year'}, $transactionAttributes{'mon'}, $transactionAttributes{'mday'}, $transactionAttributes{'hour'}, $transactionAttributes{'min'}, $transactionAttributes{'sec'}, $transactionEpoch));
               
                
@@ -510,7 +510,7 @@ sub processRecoveredTransaction
    # this is the point to process the transaction
    if ($transactionAttributesRef)
    {
-      $transactionEpoch = timelocal($$transactionAttributesRef{'sec'}, $$transactionAttributesRef{'min'}, $$transactionAttributesRef{'hour'}, $$transactionAttributesRef{'mday'}, $$transactionAttributesRef{'mon'}, $$transactionAttributesRef{'year'});
+      $transactionEpoch = timelocal($$transactionAttributesRef{'sec'}, $$transactionAttributesRef{'min'}, $$transactionAttributesRef{'hour'}, $$transactionAttributesRef{'mday'}, $$transactionAttributesRef{'mon'}-1, $$transactionAttributesRef{'year'});
       
       # extract the URL from the REQUEST HEADER to see if there's a parser associated with this webpage
       $url = undef;
