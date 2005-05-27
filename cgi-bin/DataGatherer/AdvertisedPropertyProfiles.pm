@@ -176,8 +176,10 @@ sub createTable
          $this->_createChangeTable();
          # 29Nov04: create the corresponding working view
          $this->_createWorkingViewTable();
-         # 30Nov04: create the corresponding working view
-         #$this->_createCacheViewTable();
+         
+         # create the originatingHTML table
+         $originatingHTML = $this->{'originatingHTML'};
+         $originatingHTML->createTable();
       }
      
    }
@@ -386,6 +388,10 @@ sub dropTable
                {       
             
                   $success = 1;
+                  
+                  # create the originatingHTML table
+                  $originatingHTML = $this->{'originatingHTML'};
+                  $originatingHTML->dropTable();
                }
             }
          #}
