@@ -64,7 +64,8 @@ sub new
       dbiHandle => "instanceNotConnected",
       databaseName => $databaseName,
       loggingEnabled => 0,
-      sessionName => undef
+      sessionName => undef,
+      logPath => "/projects/changeeffect/logs"
    }; 
       
    bless $sqlClient;     
@@ -566,7 +567,8 @@ sub saveSQLLog()
   ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
    $year += 1900;
    $mon++;
-   $logPath = "/projects/changeeffect/logs";
+
+   $logPath = $this->{'logPath'};
    mkdir $logPath, 0755;       	      
    open(SESSION_FILE, ">>$logPath/$sessionFileName") || print "Can't open file: $!"; 
            

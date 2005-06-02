@@ -168,7 +168,8 @@ sub new ($ $ $ $ $ $ $ $ $)
       threadID => $threadID,
       parametersHashRef => $parametersHashRef,
       httpClient => undef,
-      lastInstanceID => $lastInstanceID
+      lastInstanceID => $lastInstanceID,
+      cookiePath => "/projects/changeeffect/logs"
    };               
    
    bless $documentReader;     
@@ -1022,11 +1023,12 @@ sub recoverCookies
    my $instanceID = $this->{'instanceID'};
    
    $sessionName = $this->{'lastInstanceID'};
+   $logpPath = $this->{'cookiePath'};
+
    if ($sessionName)
    {
       $printLogger->print("in recoverCookies (lastInstanceID=$sessionName, newInstanceID=$instanceID):\n");
       # copy the old file in place of the new one
-      $logPath = "/projects/changeeffect/logs";
       if (!copy("$logPath/".$sessionName.".cookies", "$logPath/".$instanceID.".cookies"))
       {
          print "Failed to duplicate previous cookie file\n";
@@ -1064,7 +1066,7 @@ sub deleteCookies
    $httpClient->clearCookies();
 #   print "Deleting cookie file logs/".$instanceID.".cookies\n";
    # copy the old file in place of the new one
-   $logPath = "/projects/changeeffect/logs";
+   $logPath = $this->{'cookiePath'};
 
    if (!unlink("$logPath/".$instanceID.".cookies"))
    {

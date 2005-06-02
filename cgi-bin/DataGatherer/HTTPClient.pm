@@ -80,7 +80,8 @@ sub new ($)
       absoluteURL => undef,
       method => undef,
       httpTransaction => undef,
-      printLogger => undef
+      printLogger => undef,
+      logPath => "/projects/changeeffect/logs"
    };  
    bless $httpClient;    # make it an object of this class      
    
@@ -98,7 +99,7 @@ sub new ($)
    # because many sites don't clear the discard flag but still expect the cookie
    # to be saved.  Perhaps this is just my misunderstanding (5 Apr 2004)
    #print "HTTPClient:creating cookie jar: ", $sessionName, ".cookies\n";
-   $logPath = "/projects/changeeffect/logs";
+   $logPath = $this->{'logPath'};
    $cookieJar = HTTP::Cookies->new( file => "$logPath/".$sessionName.".cookies", 
                                     autosave => 0,
                                     ignore_discard => 1);
@@ -761,7 +762,7 @@ sub saveTransactionLog()
   ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
    $year += 1900;
    $mon++;
-   $logPath = "/projects/changeeffect/logs";
+   $logPath = $this->{'logPath'};
    mkdir $logPath, 0755;       	      
    open(SESSION_FILE, ">>$logPath/$sessionFileName") || print "Can't open file: $!"; 
            
