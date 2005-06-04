@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 # 21 April 2005
-# Parses the logged HTTP files to recover a database automatically.
+# Parses the logged HTTP files to extact originatingHTML files - these can be used to rebuild the database later
 #
 # History:
 # 13 March 2005 - disabled use of PropertyTypes table (typeIndex) as it's being re-written to better support 
@@ -24,14 +24,6 @@ use DocumentReader;
 use AdvertisedPropertyProfiles;
 use AgentStatusServer;
 use PropertyTypes;
-use WebsiteParser_Common;
-use WebsiteParser_REIWASales;
-use WebsiteParser_DomainSales;
-use WebsiteParser_REIWARentals;
-use WebsiteParser_REIWASuburbs;
-use WebsiteParser_RealEstateSales;
-use WebsiteParser_DomainRentals;
-use WebsiteParser_RealEstateRentals;
 use DomainRegions;
 use Validator_RegExSubstitutes;
 use MasterPropertyTable;

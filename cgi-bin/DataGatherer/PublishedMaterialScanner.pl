@@ -1310,6 +1310,7 @@ sub maintenance_PerformSuburbAnalysis
 }
 
 # -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 
 # parses the parameters mandatory for the specified command
 sub parseMandatoryParameters

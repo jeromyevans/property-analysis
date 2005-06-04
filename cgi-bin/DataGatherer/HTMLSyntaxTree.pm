@@ -272,7 +272,7 @@ sub parseContent
    $this->{'content'} = $content;
    
    # 17 January 2004 - detroy the tree builder - it includes self-references that won't be garbage collected!
- #  $treeBuilder->delete;   # destroy !!!
+   $treeBuilder->delete;   # destroy !!!
    
    return 1;
 }
