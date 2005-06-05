@@ -46,6 +46,15 @@
 #              - modified handling of localtime so it uses localtime(time) instead of the mysql in-built function
 #     localtime().  Improved support for overriding the time, and added support for the exact same timestamp
 #     to be used in the changetable and originating html
+#   5 June 2005 - important change - when checking if a tuple already exists, the dateentered field of the 
+#    existing profile is compared against the current timestamp (which may be overridden) to confirm that the 
+#    existing profile is actually OLDER than the new one.  This is necessary when processing log files, which
+#    can be encountered out of time order.  Without it, the dateentered and lastencountered fields could
+#    be corrupted (last encountered older than date entered), aslo impacting the estimates of how long a property
+#    was advertised if the dateentered is the wrong field.  NOW, a record is always added if it is deemed 
+#    older than the existing record - this may arise in duplicates in the database (except date) but these
+#    are fixed later in the batch processing/association functions.
+#
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -59,6 +68,7 @@ require Exporter;
 use DBI;
 use SQLClient;
 use OriginatingHTML;
+use Time::Local;
 
 @ISA = qw(Exporter);
 
@@ -196,7 +206,7 @@ sub createTable
 #  Storing information in the database
 #
 # Parameters:
-#  timestamp to use (in SQL TIMESTAMP format)
+#  timestamp to use (in SQL DATETIME format YYYY-MM-DD HH:MM:SS)
 #
 # Constraints:
 #  nil
@@ -220,6 +230,47 @@ sub overrideDateEntered
    $this->{'useDifferentTime'} = 1;
 }
 
+# -------------------------------------------------------------------------------------------------
+# getDateEnteredEpoch
+# gets the current dateEntered field (used for the next add if set with overrideDateEntered)
+# as an epoch value (seconds since 1970
+#
+# Purpose:
+#  Storing information in the database
+#
+# Parameters:
+#  timestamp to use (in SQL DATETIME format)
+#
+# Constraints:
+#  nil
+#
+# Uses:
+#  sqlClient
+#
+# Updates:
+#  nil
+#
+# Returns:
+#   TRUE (1) if successful, 0 otherwise
+#        
+sub getDateEnteredEpoch
+
+{
+   my $this = shift;
+   
+   if ($this->{'useDifferentTime'})
+   {
+      $timestamp = $this->{'dateEntered'};
+      ($year, $mon, $mday, $hour, $min, $sec) = split(/-|\s|:/, $timestamp);
+      $epoch = timelocal($sec, $min, $hour, $mday, $mon-1, $year-1900);
+   }
+   else
+   {
+      $epoch = -1;
+   }
+      
+   return $epoch;
+}
 
 # -------------------------------------------------------------------------------------------------
 # addRecord
@@ -499,7 +550,7 @@ sub checkIfResultExists
       $quotedSourceID = $sqlClient->quote($sourceID);
       $quotedTitleString = $sqlClient->quote($titleString);
 
-      $statementText = "SELECT sourceName, sourceID, titleString FROM $tableName WHERE SaleOrRentalFlag = $saleOrRentalFlag AND sourceName = $quotedSource AND sourceID = $quotedSourceID AND titleString = $quotedTitleString";
+      $statementText = "SELECT unix_timestamp(dateEntered) as unixTimestamp, sourceName, sourceID, titleString FROM $tableName WHERE SaleOrRentalFlag = $saleOrRentalFlag AND sourceName = $quotedSource AND sourceID = $quotedSourceID AND titleString = $quotedTitleString";
       $statement = $sqlClient->prepareStatement($statementText);
       if ($sqlClient->executeStatement($statement))
       {
@@ -515,8 +566,14 @@ sub checkIfResultExists
             if (($$_{'sourceName'} == $sourceName) && ($$_{'sourceID'} == $sourceID) && ($$_{'titleString'} == $titleString))            
             {
                # found a match
-               $found = 1;
-               last;
+               # 5 June 2005 - BUT, make sure the dateEntered for the existing record is OLDER than the record being added
+               # if it's not, added the new record  (only matters if useDifferentTime is SET)
+               $dateEntered = $this->getDateEnteredEpoch();
+               if (($$_{'unixTimestamp'} <= $dateEntered) || (!$this->{'useDifferentTime'}))
+               { 
+                  $found = 1;
+                  last;
+               }
             }
          }                 
       }              
@@ -572,11 +629,11 @@ sub checkIfTupleExists
       {
          if ($advertisedPriceLower)
          {
-            $statementText = "SELECT sourceName, sourceID, checksum, advertisedPriceString FROM $tableName WHERE SaleOrRentalFlag = $saleOrRentalFlag AND sourceName = $quotedSource and sourceID = $quotedSourceID and checksum = $checksum and advertisedPriceString = $advertisedPriceString";
+            $statementText = "SELECT unix_timestamp(dateEntered) as unixTimestamp, sourceName, sourceID, checksum, advertisedPriceString FROM $tableName WHERE SaleOrRentalFlag = $saleOrRentalFlag AND sourceName = $quotedSource and sourceID = $quotedSourceID and checksum = $checksum and advertisedPriceString = $advertisedPriceString";
          }
          else
          {
-            $statementText = "SELECT sourceName, sourceID, checksum FROM $tableName WHERE SaleOrRentalFlag = $saleOrRentalFlag AND sourceName = $quotedSource and sourceID = $quotedSourceID and checksum = $checksum";
+            $statementText = "SELECT unix_timestamp(dateEntered) as unixTimestamp, sourceName, sourceID, checksum FROM $tableName WHERE SaleOrRentalFlag = $saleOrRentalFlag AND sourceName = $quotedSource and sourceID = $quotedSourceID and checksum = $checksum";
          }
       }
       else
@@ -586,13 +643,13 @@ sub checkIfTupleExists
          {
             #print "   checkIfTupleExists:apl=$advertisedPriceLower\n";
 
-            $statementText = "SELECT sourceName, sourceID, advertisedPriceString FROM $tableName WHERE SaleOrRentalFlag = $saleOrRentalFlag AND sourceName = $quotedSource and sourceID = $quotedSourceID and advertisedPriceString = $advertisedPriceString";
+            $statementText = "SELECT unix_timestamp(dateEntered) as unixTimestamp, sourceName, sourceID, advertisedPriceString FROM $tableName WHERE SaleOrRentalFlag = $saleOrRentalFlag AND sourceName = $quotedSource and sourceID = $quotedSourceID and advertisedPriceString = $advertisedPriceString";
          }
          else
          {
             #print "   checkIfTupleExists:no apl\n";
 
-            $statementText = "SELECT sourceName, sourceID FROM $tableName WHERE SaleOrRentalFlag = $saleOrRentalFlag AND sourceName = $quotedSource and sourceID = $quotedSourceID";
+            $statementText = "SELECT unix_timestamp(dateEntered) as unixTimestamp, sourceName, sourceID FROM $tableName WHERE SaleOrRentalFlag = $saleOrRentalFlag AND sourceName = $quotedSource and sourceID = $quotedSourceID";
          }
       }
       
@@ -614,8 +671,14 @@ sub checkIfTupleExists
                if (($$_{'checksum'} == $checksum) && ($$_{'sourceName'} == $sourceName) && ($$_{'sourceID'} == $sourceID) && ($$_{'advertisedPriceString'} == $advertisedPriceString))            
                {
                   # found a match
-                  $found = 1;
-                  last;
+                  # 5 June 2005 - BUT, make sure the dateEntered for the existing record is OLDER than the record being added
+                  # if it's not, added the new record  (only matters if useDifferentTime is SET)
+                  $dateEntered = $this->getDateEnteredEpoch();
+                  if (($$_{'unixTimestamp'} <= $dateEntered) || (!$this->{'useDifferentTime'}))
+                  { 
+                     $found = 1;
+                     last;
+                  }
                }
             }
             else
@@ -624,8 +687,14 @@ sub checkIfTupleExists
                if (($$_{'checksum'} == $checksum) && ($$_{'sourceName'} == $sourceName) && ($$_{'sourceID'} == $sourceID))            
                {
                   # found a match
-                  $found = 1;
-                  last;
+                  # 5 June 2005 - BUT, make sure the dateEntered for the existing record is OLDER than the record being added
+                  # if it's not, added the new record  (only matters if useDifferentTime is SET)
+                  $dateEntered = $this->getDateEnteredEpoch();
+                  if (($$_{'unixTimestamp'} <= $dateEntered) || (!$this->{'useDifferentTime'}))
+                  { 
+                     $found = 1;
+                     last;
+                  }
                }
             }
          }                 

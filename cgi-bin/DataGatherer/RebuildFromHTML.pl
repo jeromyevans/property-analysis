@@ -237,9 +237,9 @@ sub recurseDirectory
    print "   $files files, $subdirectories subdirectories\n";
 
    # --- source the listings ---
-   # filenames are sorted numerically
+   # filenames and directories are sorted numerically
    @listing = sort { $a <=> $b } @listing;
-   @subdirectory = sort @subdirectory;
+   @subdirectory = sort { $a <=> $b } @subdirectory;
    
    # --- parse the files in this directory ---
    foreach (@listing)
