@@ -288,10 +288,6 @@ sub recoverLogFiles
                   $transactionAttributes{$_} =~ s/'//g;
                }
                
-               $transactionEpoch = timelocal($transactionAttributes{'sec'}, $transactionAttributes{'min'}, $transactionAttributes{'hour'}, $transactionAttributes{'mday'}, $transactionAttributes{'mon'}-1, $transactionAttributes{'year'});
-               #$printLogger->print(sprintf("   Transaction time: %04d-%02d-%02d %02d:%02d:%02d (%d)", $transactionAttributes{'year'}, $transactionAttributes{'mon'}, $transactionAttributes{'mday'}, $transactionAttributes{'hour'}, $transactionAttributes{'min'}, $transactionAttributes{'sec'}, $transactionEpoch));
-              
-               
                #print "   processing...\n";
                processRecoveredTransaction(\%transactionAttributes, \@requestHeader, \@responseBody, $transactions);
                            
@@ -502,7 +498,7 @@ sub processRecoveredTransaction
    # this is the point to process the transaction
    if ($transactionAttributesRef)
    {
-      $transactionEpoch = timelocal($$transactionAttributesRef{'sec'}, $$transactionAttributesRef{'min'}, $$transactionAttributesRef{'hour'}, $$transactionAttributesRef{'mday'}, $$transactionAttributesRef{'mon'}-1, $$transactionAttributesRef{'year'});
+      $timeStamp = sprintf("%04d-%02d-%02d %02d:%02d:%02d", $$transactionAttributesRef{'year'}, $$transactionAttributesRef{'mon'}, $$transactionAttributesRef{'mday'}, $$transactionAttributesRef{'hour'}, $$transactionAttributesRef{'min'}, $$transactionAttributesRef{'sec'});
       
       # extract the URL from the REQUEST HEADER to see if there's a parser associated with this webpage
       $url = undef;
@@ -542,7 +538,7 @@ sub processRecoveredTransaction
                # create new OriginatingHTML file in the destination directory...
                # (this is using the new method)
                
-               $originatingHTML->saveHTMLContent($recoveredIdentifier, $content, $url, $transactionEpoch);
+               $originatingHTML->saveHTMLContent($recoveredIdentifier, $content, $url, $timeStamp);
                $recoveredIdentifier++;
             }            
          }

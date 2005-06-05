@@ -25,6 +25,10 @@
 #   better visual comparison to the database
 #             - modified saveHTMLContent to place url and timestamp in single quotes
 #             - modified addRecord to allow the timestamp to be specified
+# 5 June 2005 - added function readHTMLContentWithHeader that extracts the fields from the originatingHTML header
+#   while reading the file.  It returns the content, url and timestamp in an array.  The readHTMLContent function
+#   now just calls readHTMLContentWithHEader but discards the unused unformation.  The stripHeader flag is still
+#   used by both functions.
 # CONVENTIONS
 # _ indicates a private variable or method
 # ---CVS---
@@ -365,10 +369,13 @@ sub saveHTMLContent ($ $ $ $)
    close(SESSION_FILE);      
 }
 
+# -------------------------------------------------------------------------------------------------
+
 
 # -------------------------------------------------------------------------------------------------
-# readHTMLContent
-#  reads from disk the html content for the specified record
+# readHTMLContentWithHeader
+#  reads from disk the html content for the specified record as well as extacting the 
+# fields in the header
 # 
 # Purpose:
 #  Debugging
@@ -383,8 +390,10 @@ sub saveHTMLContent ($ $ $ $)
 #
 # Returns:
 #   content
+#   string sourceurl
+#   string timestamp
 #
-sub readHTMLContent
+sub readHTMLContentWithHeader
 
 {
    my $this = shift;
@@ -395,6 +404,8 @@ sub readHTMLContent
    my $content = undef;
    my $SEEKING_HEADER = 0;
    my $IN_HEADER = 1;
+   my $sourceurl = undef;
+   my $timestamp = undef;
    
    $sourcePath = $this->targetPath($identifier);
    $lineNo = 0;
@@ -405,7 +416,7 @@ sub readHTMLContent
       while (<SESSION_FILE>)
       {
          $thisLine = $_;
-         $skipThisLine = 0;
+         $thisLineIsHeader = 0;
          
          # originating HTML header processing
          if ($stripHeader)
@@ -419,7 +430,7 @@ sub readHTMLContent
                   if ($line =~ /OriginatingHTML/gi)
                   {
                      $state = $IN_HEADER;
-                     $skipThisLine = 1;
+                     $thisLineIsHeader = 1;
                   }
                }
                
@@ -427,21 +438,31 @@ sub readHTMLContent
                {
                   if ($line =~ /sourceurl=/gi)
                   {
-                     $skipThisLine = 1;
+                     # extract the sourceurl header element
+                     ($label, $sourceurl) = split(/=/, $line, 2);
+                     $sourceurl =~ s/\'//g;   # remove single quotes
+                     
+                     $thisLineIsHeader = 1;
                   }
                   elsif ($line =~ /localtime=/gi)
                   {
-                     $skipThisLine = 1;
+                     # extract the timestamp header element
+                     ($label, $timestamp) = split(/=/, $line, 2);
+                     $timestamp =~ s/\'//g;   # remove single quotes
+               
+                     $thisLineIsHeader = 1;
                   }
                   elsif ($line =~ /---\>/gi)
                   {
-                     $skipThisLine = 1;
+                     $thisLineIsHeader = 1;
                      $state = $SEEKING_HEADER;
                   }
                }
             }
          }
-         if (!$skipThisLine)
+         #  if this line is part of the header, only add it to the content if the stripHeader flag is clear
+         #  if this line is not part of the header, always add it
+         if ((!$stripHeader) || (!$thisLineIsHeader))
          {  
             # add this line to the content
             $body[$lineNo] = $_;
@@ -461,8 +482,41 @@ sub readHTMLContent
    
    close(SESSION_FILE);
    
+   
+   return ($content, $sourceurl, $timestamp);
+}
+
+# -------------------------------------------------------------------------------------------------
+# readHTMLContent
+#  reads from disk the html content for the specified record
+#  NOTE: this function calls readHTMLContentWithHeader but simply discards the header information
+#
+# Purpose:
+#  maintenance
+#
+# Parameters:
+#  integer identifier (primary key of the OriginatingHTML)
+#  optional integer flag stripHeader - if set, the OriginatingHTML header is removed from the content
+# Constraints:
+#  nil
+#
+# Updates:
+#
+# Returns:
+#   content
+#
+sub readHTMLContent
+
+{
+   my $this = shift;
+   my $identifier = shift;
+   my $stripHeader = shift;
+   
+   ($content, $sourceurl, $timestamp) = $this->readHTMLContentWithHeader($identifier, $stripHeader);
+   
    return $content;
 }
 
 # -------------------------------------------------------------------------------------------------
+
 

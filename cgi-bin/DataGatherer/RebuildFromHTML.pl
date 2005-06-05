@@ -175,15 +175,15 @@ sub parseOriginatingHTMLFile
    {
       # REIWA         
       $printLogger->print("$timestamp (REIWA)\n");
-#      $advertisedPropertyProfiles->overrideDateEntered($timestamp);
-#      parseREIWASearchDetails($documentReader, $htmlSyntaxTree, $sourceurl, $$parameters{'instanceID'}, $transactionNo, $documentReader->getThreadID(), undef);  
+      $advertisedPropertyProfiles->overrideDateEntered($timestamp);
+      parseREIWASearchDetails($documentReader, $htmlSyntaxTree, $sourceurl, $$parameters{'instanceID'}, $transactionNo, $documentReader->getThreadID(), undef);  
    }
    elsif ($htmlSyntaxTree->containsTextPattern("Domain\.com\.au"))
    {
       # domain
       $printLogger->print("$timestamp (Domain)\n");
-#      $advertisedPropertyProfiles->overrideDateEntered($timestamp);
-#      parseDomainPropertyDetails($documentReader, $htmlSyntaxTree, $sourceurl, $$parameters{'instanceID'}, $transactionNo, $documentReader->getThreadID(), undef);
+      $advertisedPropertyProfiles->overrideDateEntered($timestamp);
+      parseDomainPropertyDetails($documentReader, $htmlSyntaxTree, $sourceurl, $$parameters{'instanceID'}, $transactionNo, $documentReader->getThreadID(), undef);
    }
    elsif ($htmlSyntaxTree->containsTextPattern("realestate\.com\.au"))
    {
