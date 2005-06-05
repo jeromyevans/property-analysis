@@ -236,6 +236,11 @@ sub recurseDirectory
    closedir(BIN);
    print "   $files files, $subdirectories subdirectories\n";
 
+   # --- source the listings ---
+   # filenames are sorted numerically
+   @listing = sort { $a <=> $b } @listing;
+   @subdirectory = sort @subdirectory;
+   
    # --- parse the files in this directory ---
    foreach (@listing)
    {
